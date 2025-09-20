@@ -124,9 +124,7 @@ output:
           pbhub: pb_hub
           number: 33
       id: pwm_led
-```
 
-```yaml
 light:
     - platform: monochromatic
       output: pwm_led
@@ -142,9 +140,7 @@ output:
           pbhub: pb_hub
           number: 34
       id: pwm_motor
-```
 
-```yaml
 fan:
     - platform: speed
       output: pwm_motor
@@ -160,9 +156,7 @@ output:
           pbhub: pb_hub
           number: 35
       id: pwm_buzzer
-```
 
-```yaml
 rtttl:
     output: pwm_buzzer
     name: 'Buzzer RTTTL'
