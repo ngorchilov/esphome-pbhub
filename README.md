@@ -12,7 +12,7 @@ This ESPHome component adds support for the [M5Stack PBHUB / PortHub](https://do
 
 -   Digital GPIO (per-slot A/B pins, read/write)
 -   Analog input (ADC)
--   PWM output (LED/servo control)
+-   PWM output (LED, motors, buzzer, servo control)
 -   RGB LED support
 -   Compatible with direct I2C or I2C multiplexers (e.g., PCA9548)
 
@@ -75,32 +75,11 @@ You can have multiple PBHUBs, each with a different address or multiplexer chann
 
 ---
 
-## Understanding PBHUB Pin Numbers
-
-PBHUB pin numbers are structured based on the slot number and the pin index within the slot. The formula is:
-
-```
-pin_number = slot × 10 + index
-```
-
-where `index` is `0` for pin A and `1` for pin B of each slot.
-
-**Examples:**
-
--   Slot 3, pin A = 30
--   Slot 3, pin B = 31
--   Slot 5, pin A = 50
--   Slot 5, pin B = 51
-
-This numbering scheme helps you easily identify and configure pins corresponding to specific slots and their A/B pins.
-
----
-
 ## Usage Examples
 
 ### 1. Digital GPIO (Read/Write)
 
-You can use PBHUB pins as digital outputs or inputs, just like regular GPIOs:
+You can use PBHUB pins as digital outputs or inputs, just like regular GPIOs. See [Understanding PBHUB Pin Numbers](#understanding-pbhub-pin-numbers) for pin numbering details.
 
 ```yaml
 switch:
@@ -120,7 +99,7 @@ binary_sensor:
 
 ### 2. Analog Input
 
-Read analog values from PBHUB slots:
+Read analog values from PBHUB slots. See [Understanding PBHUB Pin Numbers](#understanding-pbhub-pin-numbers) for pin numbering details.
 
 ```yaml
 sensor:
@@ -132,9 +111,11 @@ sensor:
       update_interval: 1s
 ```
 
-### 3. PWM Output (Including Servo)
+### 3. PWM Output
 
-Use the custom PBHUB PWM platform to control LEDs, motors, or servos attached to PBHUB:
+Use the custom PBHUB PWM platform to control LEDs, motors, buzzers, or servos attached to PBHUB pins. See [Understanding PBHUB Pin Numbers](#understanding-pbhub-pin-numbers) for pin numbering details.
+
+#### LED PWM Output
 
 ```yaml
 output:
@@ -142,10 +123,63 @@ output:
       pin:
           pbhub: pb_hub
           number: 33
-      id: pwm_output
+      id: pwm_led
+```
+
+```yaml
+light:
+    - platform: monochromatic
+      output: pwm_led
+      name: 'Dimmable LED'
+```
+
+#### Motor Control (PWM)
+
+```yaml
+output:
+    - platform: pbhub_pwm
+      pin:
+          pbhub: pb_hub
+          number: 34
+      id: pwm_motor
+```
+
+```yaml
+fan:
+    - platform: speed
+      output: pwm_motor
+      name: 'PWM Fan'
+```
+
+#### Buzzer PWM Output
+
+```yaml
+output:
+    - platform: pbhub_pwm
+      pin:
+          pbhub: pb_hub
+          number: 35
+      id: pwm_buzzer
+```
+
+```yaml
+rtttl:
+    output: pwm_buzzer
+    name: 'Buzzer RTTTL'
+```
+
+#### Servo Control
+
+```yaml
+output:
+    - platform: pbhub_pwm
+      pin:
+          pbhub: pb_hub
+          number: 36
+      id: pwm_servo
 
 servo:
-    - output: pwm_output
+    - output: pwm_servo
       id: servo_1
       min_pulse_width: 500us
       max_pulse_width: 2500us
@@ -153,7 +187,7 @@ servo:
 
 ### 4. RGB LED
 
-Drive an RGB LED connected to PBHUB using the custom PBHUB RGB platform. You can specify the slot and optionally the number of LEDs:
+Drive an RGB LED connected to PBHUB using the custom PBHUB RGB platform. You can specify the slot and optionally the number of LEDs. See [Understanding PBHUB Pin Numbers](#understanding-pbhub-pin-numbers) for pin numbering details.
 
 ```yaml
 light:
@@ -163,6 +197,27 @@ light:
       num_leds: 1 # Optional, defaults to 1 if omitted
       name: 'RGB LED'
 ```
+
+---
+
+## Understanding PBHUB Pin Numbers
+
+PBHUB pin numbers are structured based on the slot number and the pin index within the slot. The formula is:
+
+```
+pin_number = slot × 10 + index
+```
+
+where `index` is `0` for pin A and `1` for pin B of each slot.
+
+**Examples:**
+
+-   Slot 3, pin A = 30
+-   Slot 3, pin B = 31
+-   Slot 5, pin A = 50
+-   Slot 5, pin B = 51
+
+This numbering scheme helps you easily identify and configure pins corresponding to specific slots and their A/B pins.
 
 ---
 
