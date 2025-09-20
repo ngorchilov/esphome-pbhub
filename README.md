@@ -75,6 +75,27 @@ You can have multiple PBHUBs, each with a different address or multiplexer chann
 
 ---
 
+## Understanding PBHUB Pin Numbers
+
+PBHUB pin numbers are structured based on the slot number and the pin index within the slot. The formula is:
+
+```
+pin_number = slot × 10 + index
+```
+
+where `index` is `0` for pin A and `1` for pin B of each slot.
+
+**Examples:**
+
+-   Slot 3, pin A = 30
+-   Slot 3, pin B = 31
+-   Slot 5, pin A = 50
+-   Slot 5, pin B = 51
+
+This numbering scheme helps you easily identify and configure pins corresponding to specific slots and their A/B pins.
+
+---
+
 ## Usage Examples
 
 ### 1. Digital GPIO (Read/Write)
@@ -113,11 +134,11 @@ sensor:
 
 ### 3. PWM Output (Including Servo)
 
-Use PWM to control LEDs, motors, or servos attached to PBHUB:
+Use the custom PBHUB PWM platform to control LEDs, motors, or servos attached to PBHUB:
 
 ```yaml
 output:
-    - platform: ledc
+    - platform: pbhub_pwm
       pin:
           pbhub: pb_hub
           number: 33
@@ -132,23 +153,14 @@ servo:
 
 ### 4. RGB LED
 
-Drive an RGB LED connected to PBHUB:
+Drive an RGB LED connected to PBHUB using the custom PBHUB RGB platform. You can specify the slot and optionally the number of LEDs:
 
 ```yaml
 light:
-    - platform: rgb
-      red:
-          pin:
-              pbhub: pb_hub
-              number: 34
-      green:
-          pin:
-              pbhub: pb_hub
-              number: 35
-      blue:
-          pin:
-              pbhub: pb_hub
-              number: 36
+    - platform: pbhub_rgb
+      pbhub: pb_hub
+      slot: 3
+      num_leds: 1 # Optional, defaults to 1 if omitted
       name: 'RGB LED'
 ```
 
