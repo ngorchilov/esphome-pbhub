@@ -8,10 +8,12 @@ namespace esphome
 
     static const char *const TAG = "pbhub";
 
+    // -----------------------------------------------------------------------------
+    // PbHubComponent
+    // -----------------------------------------------------------------------------
     void PbHubComponent::setup()
     {
-      ESP_LOGCONFIG(TAG, "Setting up PBHUB at 0x%02X (native I2CDevice)...", this->address_);
-      // No special init sequence required from original driver for GPIO/ADC/Servo
+      ESP_LOGCONFIG(TAG, "Setting up PBHUB at 0x%02X ...", this->address_);
     }
 
     void PbHubComponent::dump_config()
@@ -20,111 +22,175 @@ namespace esphome
       ESP_LOGCONFIG(TAG, "  Address: 0x%02X", this->address_);
     }
 
-    // ---------------- GPIO (digital) ----------------
+    uint8_t PbHubComponent::get_fw_version()
+    {
+      uint8_t reg = reg_fw_version();
+      uint8_t val = 0;
+      auto err = this->write_read(&reg, 1, &val, 1);
+      if (err != i2c::ERROR_OK)
+      {
+        ESP_LOGW(TAG, "FW_VERSION read failed (reg=0x%02X err=%d)", reg, err);
+        return 0;
+      }
+      ESP_LOGI(TAG, "Firmware version: %u (reg=0x%02X)", val, reg);
+      return val;
 
+    } // -------- GPIO (digital) --------
     void PbHubComponent::pin_mode(uint8_t pin, uint8_t mode)
     {
-      // Hub is register-driven per channel; no separate mode command required here.
-      ESP_LOGD(TAG, "PINMODE pin %u -> mode=%u (no-op for PBHub GPIO)", pin, mode);
+      ESP_LOGD(TAG, "pin_mode(pin=%u, mode=%u) -> no-op", pin, mode);
     }
 
-    void PbHubComponent::digital_write_pin(uint8_t pin, bool state)
+    void PbHubComponent::digital_write(uint8_t pin, bool state)
     {
-      const uint8_t slot = this->slot_from_pin(pin);
-      const uint8_t idx = this->idx_from_pin(pin);
-      const uint8_t reg = this->reg_write_digital(slot, idx);
+      uint8_t slot = slot_from_pin(pin);
+      uint8_t idx = idx_from_pin(pin);
 
-      const uint8_t val = state ? 0x01 : 0x00;
+      uint8_t reg = reg_write_digital(slot, idx);
+      uint8_t val = state ? 0x01 : 0x00;
+
       auto err = this->write_register(reg, &val, 1);
-
-      ESP_LOGD(TAG,
-               "DWRITE pin %u (slot %u idx %u) -> %s (reg=0x%02X, val=0x%02X, err=%d)",
+      ESP_LOGD(TAG, "DWRITE pin %u (slot=%u idx=%u) -> %s (reg=0x%02X val=0x%02X err=%d)",
                pin, slot, idx, state ? "ON" : "OFF", reg, val, err);
     }
 
-    bool PbHubComponent::digital_read_pin(uint8_t pin)
+    bool PbHubComponent::digital_read(uint8_t pin)
     {
-      const uint8_t slot = this->slot_from_pin(pin);
-      const uint8_t idx = this->idx_from_pin(pin);
-      const uint8_t reg = this->reg_read_digital(slot, idx);
+      uint8_t slot = slot_from_pin(pin);
+      uint8_t idx = idx_from_pin(pin);
 
+      uint8_t reg = reg_read_digital(slot, idx);
       uint8_t val = 0;
-      auto err = this->read_register(reg, &val, 1);
+      auto err = this->write_read(&reg, 1, &val, 1);
       if (err != i2c::ERROR_OK)
       {
-        ESP_LOGW(TAG, "DREAD failed: pin %u (slot %u idx %u) reg=0x%02X err=%d",
+        ESP_LOGW(TAG, "DREAD failed: pin %u (slot=%u idx=%u) reg=0x%02X err=%d",
                  pin, slot, idx, reg, err);
         return false;
       }
-      const bool state = (val != 0);
-      ESP_LOGD(TAG, "DREAD pin %u (slot %u idx %u) <- %s (reg=0x%02X, raw=0x%02X)",
+      bool state = val & 0x01;
+      ESP_LOGD(TAG, "DREAD pin %u (slot=%u idx=%u) <- %s (reg=0x%02X val=0x%02X)",
                pin, slot, idx, state ? "ON" : "OFF", reg, val);
       return state;
     }
 
-    // ---------------- ADC ----------------
-
-    uint16_t PbHubComponent::analog_read_pin(uint8_t pin)
+    // -------- ADC --------
+    uint16_t PbHubComponent::analog_read(uint8_t slot)
     {
-      const uint8_t slot = this->slot_from_pin(pin);
-      const uint8_t idx = this->idx_from_pin(pin);
-      const uint8_t reg = this->reg_read_analog(slot, idx);
-
+      uint8_t reg = reg_read_analog(slot);
       uint8_t buf[2] = {0, 0};
-      auto err = this->read_register(reg, buf, 2);
+      auto err = this->write_read(&reg, 1, buf, 2);
       if (err != i2c::ERROR_OK)
       {
-        ESP_LOGW(TAG, "AREAD failed: pin %u (slot %u idx %u) reg=0x%02X err=%d",
-                 pin, slot, idx, reg, err);
+        ESP_LOGW(TAG, "AREAD failed: slot=%u reg=0x%02X err=%d", slot, reg, err);
         return 0;
       }
-      // Assume little-endian (lo, hi)
-      const uint16_t value = static_cast<uint16_t>(buf[0]) | (static_cast<uint16_t>(buf[1]) << 8);
-      ESP_LOGD(TAG, "AREAD pin %u (slot %u idx %u) <- %u (reg=0x%02X, bytes=%02X %02X)",
-               pin, slot, idx, value, reg, buf[0], buf[1]);
+      uint16_t value = static_cast<uint16_t>(buf[0] | (buf[1] << 8));
+      ESP_LOGD(TAG, "AREAD slot=%u <- %u (reg=0x%02X raw=%02X %02X)", slot, value, reg, buf[0], buf[1]);
       return value;
     }
 
-    // ---------------- Servo ----------------
-
-    void PbHubComponent::servo_write_angle(uint8_t pin, uint8_t angle)
+    // -------- PWM --------
+    void PbHubComponent::set_pwm(uint8_t slot, uint8_t idx, uint8_t duty)
     {
-      const uint8_t slot = this->slot_from_pin(pin);
-      const uint8_t idx = this->idx_from_pin(pin);
-      const uint8_t reg = this->reg_servo_angle(slot, idx);
-
-      auto a = angle;
-      auto err = this->write_register(reg, &a, 1);
-      ESP_LOGD(TAG, "SERVO angle pin %u (slot %u idx %u) -> %u (reg=0x%02X, err=%d)",
-               pin, slot, idx, angle, reg, err);
+      uint8_t reg = reg_pwm(slot, idx);
+      auto err = this->write_register(reg, &duty, 1);
+      ESP_LOGD(TAG, "PWM slot=%u idx=%u duty=%u (reg=0x%02X err=%d)", slot, idx, duty, reg, err);
     }
 
-    void PbHubComponent::servo_write_pulse_us(uint8_t pin, uint16_t micros)
+    // -------- Servo --------
+    void PbHubComponent::set_servo_angle(uint8_t slot, uint8_t idx, uint8_t angle)
     {
-      const uint8_t slot = this->slot_from_pin(pin);
-      const uint8_t idx = this->idx_from_pin(pin);
-      const uint8_t reg = this->reg_servo_pulse(slot, idx);
-
-      uint8_t buf[2] = {static_cast<uint8_t>(micros & 0xFF),
-                        static_cast<uint8_t>((micros >> 8) & 0xFF)};
-      auto err = this->write_register(reg, buf, 2);
-      ESP_LOGD(TAG, "SERVO pulse pin %u (slot %u idx %u) -> %u us (reg=0x%02X, data=%02X %02X, err=%d)",
-               pin, slot, idx, micros, reg, buf[0], buf[1], err);
+      uint8_t reg = reg_servo_angle(slot, idx);
+      auto err = this->write_register(reg, &angle, 1);
+      ESP_LOGD(TAG, "SERVO slot=%u idx=%u angle=%u (reg=0x%02X err=%d)", slot, idx, angle, reg, err);
     }
 
-    // ---------------- GPIOPin wrapper ----------------
+    void PbHubComponent::set_servo_pulse(uint8_t slot, uint8_t idx, uint16_t micros)
+    {
+      uint8_t reg = reg_servo_pulse(slot, idx);
+      uint8_t data[2] = {uint8_t(micros & 0xFF), uint8_t(micros >> 8)};
+      auto err = this->write_register(reg, data, 2);
+      ESP_LOGD(TAG, "SERVO slot=%u idx=%u pulse=%uus (reg=0x%02X data=%02X %02X err=%d)",
+               slot, idx, micros, reg, data[0], data[1], err);
+    }
 
+    // -------- RGB Light --------
+    void PbHubComponent::set_led_num(uint8_t slot, uint16_t count)
+    {
+      uint8_t reg = reg_led_num(slot);
+      uint8_t data[2] = {uint8_t(count & 0xFF), uint8_t(count >> 8)};
+      auto err = this->write_register(reg, data, 2);
+      ESP_LOGD(TAG, "LED_NUM slot=%u count=%u (reg=0x%02X err=%d)", slot, count, reg, err);
+    }
+
+    void PbHubComponent::set_led_color(uint8_t slot, uint16_t index, uint8_t r, uint8_t g, uint8_t b)
+    {
+      uint8_t reg = reg_led_color(slot);
+      uint8_t data[5] = {
+          uint8_t(index & 0xFF),
+          uint8_t(index >> 8),
+          r, g, b};
+      auto err = this->write_register(reg, data, sizeof(data));
+      ESP_LOGD(TAG, "LED_COLOR slot=%u index=%u color=(%u,%u,%u) (reg=0x%02X err=%d)",
+               slot, index, r, g, b, reg, err);
+    }
+
+    void PbHubComponent::fill_led_color(uint8_t slot, uint16_t start, uint16_t count,
+                                        uint8_t r, uint8_t g, uint8_t b)
+    {
+      uint8_t reg = reg_led_fill(slot);
+      uint8_t data[7] = {
+          uint8_t(start & 0xFF),
+          uint8_t(start >> 8),
+          uint8_t(count & 0xFF),
+          uint8_t(count >> 8),
+          r, g, b};
+      auto err = this->write_register(reg, data, sizeof(data));
+      ESP_LOGD(TAG, "LED_FILL slot=%u start=%u count=%u color=(%u,%u,%u) (reg=0x%02X err=%d)",
+               slot, start, count, r, g, b, reg, err);
+    }
+
+    void PbHubComponent::set_led_brightness(uint8_t slot, uint8_t value)
+    {
+      uint8_t reg = reg_led_brightness(slot);
+      auto err = this->write_register(reg, &value, 1);
+      ESP_LOGD(TAG, "LED_BRIGHTNESS slot=%u value=%u (reg=0x%02X err=%d)", slot, value, reg, err);
+    }
+
+    void PbHubComponent::set_led_show_mode(uint8_t mode)
+    {
+      uint8_t reg = reg_led_show_mode();
+      auto err = this->write_register(reg, &mode, 1);
+      ESP_LOGD(TAG, "LED_SHOW_MODE mode=%u (reg=0x%02X err=%d)", mode, reg, err);
+    }
+
+    uint8_t PbHubComponent::get_led_show_mode()
+    {
+      uint8_t reg = reg_led_show_mode();
+      uint8_t val = 0;
+      auto err = this->write_read(&reg, 1, &val, 1);
+      if (err != i2c::ERROR_OK)
+      {
+        ESP_LOGW(TAG, "LED_SHOW_MODE read failed (reg=0x%02X err=%d)", reg, err);
+        return 0;
+      }
+      ESP_LOGD(TAG, "LED_SHOW_MODE read -> %u (reg=0x%02X)", val, reg);
+      return val;
+    }
+
+    // -----------------------------------------------------------------------------
+    // GPIOPin wrapper
+    // -----------------------------------------------------------------------------
     void PbHubGPIOPin::setup()
     {
-      if (!parent_)
-        return;
-      ESP_LOGD(TAG, "GPIOPin setup pin=%u inverted=%d flags=0x%02X", pin_, inverted_, flags_);
-      // No explicit mode config needed on PBHub for simple digital use.
+      ESP_LOGD(TAG, "GPIOPin setup pin=%u inverted=%d flags=0x%02X",
+               pin_, inverted_, flags_);
     }
 
     void PbHubGPIOPin::pin_mode(gpio::Flags flags)
     {
-      flags_ = flags;
+      this->flags_ = flags;
       ESP_LOGD(TAG, "GPIOPin pin_mode pin=%u flags=0x%02X", pin_, flags_);
     }
 
@@ -132,7 +198,7 @@ namespace esphome
     {
       if (!parent_)
         return false;
-      bool raw = parent_->digital_read_pin(pin_);
+      bool raw = parent_->digital_read(pin_);
       return inverted_ ? !raw : raw;
     }
 
@@ -141,7 +207,7 @@ namespace esphome
       if (!parent_)
         return;
       bool send = inverted_ ? !value : value;
-      parent_->digital_write_pin(pin_, send);
+      parent_->digital_write(pin_, send);
     }
 
     std::string PbHubGPIOPin::dump_summary() const
@@ -151,5 +217,77 @@ namespace esphome
       return std::string(buf);
     }
 
+    // -----------------------------------------------------------------------------
+    // PWM wrapper
+    // -----------------------------------------------------------------------------
+    void PbHubPWMPin::write_state(float state)
+    {
+      if (!parent_)
+        return;
+      uint8_t duty = static_cast<uint8_t>(state * 255.0f);
+      uint8_t slot = parent_->slot_from_pin(pin_);
+      uint8_t idx = parent_->idx_from_pin(pin_);
+      parent_->set_pwm(slot, idx, duty);
+    }
+
+    // -----------------------------------------------------------------------------
+    // ADC wrapper
+    // -----------------------------------------------------------------------------
+    PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval)
+        : PollingComponent(update_interval), parent_(parent), slot_(slot) {}
+
+    void PbHubADC::update()
+    {
+      if (!parent_)
+        return;
+      uint16_t val = parent_->analog_read(slot_);
+      publish_state(val);
+    }
+    // -----------------------------------------------------------------------------
+    // Servo wrapper
+    // -----------------------------------------------------------------------------
+    void PbHubServo::write_state(float state)
+    {
+      if (!parent_)
+        return;
+      uint8_t angle = static_cast<uint8_t>(state * 180.0f);
+      uint8_t slot = parent_->slot_from_pin(pin_);
+      uint8_t idx = parent_->idx_from_pin(pin_);
+      parent_->set_servo_angle(slot, idx, angle);
+    }
+
+    // -----------------------------------------------------------------------------
+    // RGB Light wrapper
+    // -----------------------------------------------------------------------------
+    light::LightTraits PbHubRGBLight::get_traits()
+    {
+      auto traits = light::LightTraits();
+      traits.set_supports_brightness(false);
+      traits.set_supports_rgb(true);
+      return traits;
+    }
+
+    void PbHubRGBLight::write_state(light::LightState *state)
+    {
+      if (!parent_)
+        return;
+
+      // Ensure LED count is set once
+      if (!initialized_)
+      {
+        parent_->set_led_num(slot_, led_count_); // NEW/IMPORTANT: use led_count_
+        initialized_ = true;
+      }
+
+      float r_f, g_f, b_f;
+      state->current_values_as_rgb(&r_f, &g_f, &b_f);
+      uint8_t r = static_cast<uint8_t>(r_f * 255.0f);
+      uint8_t g = static_cast<uint8_t>(g_f * 255.0f);
+      uint8_t b = static_cast<uint8_t>(b_f * 255.0f);
+
+      // however you apply the color; if you kept set_rgb():
+      parent_->set_rgb(slot_, r, g, b);
+      // (or if you prefer the fuller API, you could call fill_led_color(slot_, 0, led_count_, r, g, b))
+    }
   } // namespace pbhub
 } // namespace esphome

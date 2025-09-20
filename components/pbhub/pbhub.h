@@ -3,12 +3,18 @@
 #include "esphome/core/component.h"
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/core/gpio.h"
-#include <cstdint>
-#include <string>
+#include "esphome/components/output/float_output.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/light/light_output.h"
 
-//
-// User-provided symbolic addresses/opcodes
-//
+namespace esphome
+{
+  namespace pbhub
+  {
+
+// ----------------------------------------------------
+// Register Defines (match M5Unit-PbHub library)
+// ----------------------------------------------------
 #define IIC_ADDR1 0x61
 #define IIC_ADDR2 0x62
 #define IIC_ADDR3 0x63
@@ -25,58 +31,68 @@
 #define HUB5_ADDR 0x80
 #define HUB6_ADDR 0xA0
 
-// Per-channel function offsets (OR with base)
-#define WRITE_DIGITAL_0 0x01 // index 0 ("A")
-#define WRITE_DIGITAL_1 0x02 // index 1 ("B")
+#define WRITE_DIGITAL_0 0x00
+#define WRITE_DIGITAL_1 0x01
+#define WRITE_PWM_0 0x02
+#define WRITE_PWM_1 0x03
 #define READ_DIGITAL_0 0x04
 #define READ_DIGITAL_1 0x05
-#define READ_ANALOG_0 0x06 // returns 2 bytes (lo, hi)
+#define READ_ANALOG_0 0x06
 #define READ_ANALOG_1 0x07
-#define SERVO_ANGLE_0 0x0C // 1 byte 0..180
+#define LED_NUM 0x08
+#define LED_COLOR 0x09
+#define LED_FILL_COLOR 0x0A
+#define LED_BRIGHTNESS 0x0B
+#define SERVO_ANGLE_0 0x0C
 #define SERVO_ANGLE_1 0x0D
-#define SERVO_PULSE_0 0x0E // 2 bytes, little-endian microseconds
+#define SERVO_PULSE_0 0x0E
 #define SERVO_PULSE_1 0x0F
+#define LED_SHOW_MODE 0xFA
+#define FW_VERSION 0xFE
 
-namespace esphome
-{
-  namespace pbhub
-  {
-
+    // ----------------------------------------------------
+    // PbHubComponent (core driver)
+    // ----------------------------------------------------
     class PbHubComponent : public Component, public i2c::I2CDevice
     {
     public:
-      // Component
       void setup() override;
       void dump_config() override;
-
-      // Simple helpers (slot/pin math)
-      inline uint8_t slot_from_pin(uint8_t pin) const { return pin / 10; } // 30 -> 3
-      inline uint8_t idx_from_pin(uint8_t pin) const { return pin % 10; }  // 30 -> 0
-
-      // Base register for slot (0..5)
-      inline uint8_t base_for_slot(uint8_t slot) const
-      {
-        return static_cast<uint8_t>(HUB1_ADDR + (slot * 0x10));
-      }
+      uint8_t get_fw_version();
 
       // -------- GPIO (digital) --------
-      // No bit preservation: hub exposes per-channel registers.
-      void pin_mode(uint8_t pin, uint8_t mode);        // kept for API symmetry (no-op)
-      void digital_write_pin(uint8_t pin, bool state); // write 1 byte to base|WRITE_DIGITAL_x
-      bool digital_read_pin(uint8_t pin);              // read 1 byte from base|READ_DIGITAL_x
+      void pin_mode(uint8_t pin, uint8_t mode); // no-op
+      void digital_write(uint8_t pin, bool state);
+      bool digital_read(uint8_t pin);
 
       // -------- ADC --------
-      // Reads 2 bytes (little-endian) from base|READ_ANALOG_x
-      // Returns 0..1023 (or hub-native scale) — caller can map as needed.
-      uint16_t analog_read_pin(uint8_t pin);
+      uint16_t analog_read(uint8_t slot);
+
+      // -------- PWM --------
+      void set_pwm(uint8_t slot, uint8_t idx, uint8_t duty);
 
       // -------- Servo --------
-      // Angle 0..180 (1 byte) to base|SERVO_ANGLE_x
-      void servo_write_angle(uint8_t pin, uint8_t angle);
-      // Pulse us (2 bytes little-endian) to base|SERVO_PULSE_x
-      void servo_write_pulse_us(uint8_t pin, uint16_t micros);
+      void set_servo_angle(uint8_t slot, uint8_t idx, uint8_t angle);
+      void set_servo_pulse(uint8_t slot, uint8_t idx, uint16_t micros);
 
-      // Convenience: compute function register for slot+idx
+      // -------- RGB / LED --------
+      void set_led_num(uint8_t slot, uint16_t count);
+      void set_led_color(uint8_t slot, uint16_t index, uint8_t r, uint8_t g, uint8_t b);
+      void fill_led_color(uint8_t slot, uint16_t start, uint16_t count, uint8_t r, uint8_t g, uint8_t b);
+      void set_led_brightness(uint8_t slot, uint8_t value);
+      void set_led_show_mode(uint8_t mode);
+      uint8_t get_led_show_mode();
+
+      // Helpers: slot/pin math
+      inline uint8_t slot_from_pin(uint8_t pin) const { return pin / 10; } // 30 -> slot=3
+      inline uint8_t idx_from_pin(uint8_t pin) const { return pin % 10; }  // 30 -> idx=0
+      inline uint8_t base_for_slot(uint8_t slot) const
+      {
+        static const uint8_t BASES[6] = {HUB1_ADDR, HUB2_ADDR, HUB3_ADDR, HUB4_ADDR, HUB5_ADDR, HUB6_ADDR};
+        return (slot < 6) ? BASES[slot] : HUB1_ADDR;
+      }
+
+      // Register address helpers
       inline uint8_t reg_write_digital(uint8_t slot, uint8_t idx) const
       {
         return base_for_slot(slot) | (idx == 0 ? WRITE_DIGITAL_0 : WRITE_DIGITAL_1);
@@ -85,9 +101,13 @@ namespace esphome
       {
         return base_for_slot(slot) | (idx == 0 ? READ_DIGITAL_0 : READ_DIGITAL_1);
       }
-      inline uint8_t reg_read_analog(uint8_t slot, uint8_t idx) const
+      inline uint8_t reg_read_analog(uint8_t slot) const
       {
-        return base_for_slot(slot) | (idx == 0 ? READ_ANALOG_0 : READ_ANALOG_1);
+        return base_for_slot(slot) | READ_ANALOG_0;
+      }
+      inline uint8_t reg_pwm(uint8_t slot, uint8_t idx) const
+      {
+        return base_for_slot(slot) | (idx == 0 ? WRITE_PWM_0 : WRITE_PWM_1);
       }
       inline uint8_t reg_servo_angle(uint8_t slot, uint8_t idx) const
       {
@@ -97,16 +117,36 @@ namespace esphome
       {
         return base_for_slot(slot) | (idx == 0 ? SERVO_PULSE_0 : SERVO_PULSE_1);
       }
+      inline uint8_t reg_led_num(uint8_t slot) const
+      {
+        return base_for_slot(slot) | LED_NUM;
+      }
+      inline uint8_t reg_led_color(uint8_t slot) const
+      {
+        return base_for_slot(slot) | LED_COLOR;
+      }
+      inline uint8_t reg_led_fill(uint8_t slot) const
+      {
+        return base_for_slot(slot) | LED_FILL_COLOR;
+      }
+      inline uint8_t reg_led_brightness(uint8_t slot) const
+      {
+        return base_for_slot(slot) | LED_BRIGHTNESS;
+      }
+      // LED show mode and FW version are global, not slot-based.
+      inline uint8_t reg_led_show_mode() const { return LED_SHOW_MODE; }
+      inline uint8_t reg_fw_version() const { return FW_VERSION; }
     };
 
-    // GPIOPin wrapper so you can use `pin: pbhub: ... number: 30` in YAML
+    // ----------------------------------------------------
+    // GPIO Pin Wrapper
+    // ----------------------------------------------------
     class PbHubGPIOPin : public GPIOPin
     {
     public:
       PbHubGPIOPin() = default;
       PbHubGPIOPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
 
-      // Required virtuals
       void setup() override;
       void pin_mode(gpio::Flags flags) override;
       bool digital_read() override;
@@ -114,7 +154,6 @@ namespace esphome
       std::string dump_summary() const override;
       gpio::Flags get_flags() const override { return flags_; }
 
-      // Extra setters
       void set_parent(PbHubComponent *p) { parent_ = p; }
       void set_pin(uint8_t pin) { pin_ = pin; }
       void set_inverted(bool inv) { inverted_ = inv; }
@@ -122,10 +161,81 @@ namespace esphome
 
     protected:
       PbHubComponent *parent_{nullptr};
-      uint8_t pin_{0}; // pbhub pin: slot*10 + idx
+      uint8_t pin_{0};
       bool inverted_{false};
       gpio::Flags flags_{gpio::FLAG_NONE};
     };
 
+    // ----------------------------------------------------
+    // PWM Output
+    // ----------------------------------------------------
+    class PbHubPWMPin : public output::FloatOutput
+    {
+    public:
+      PbHubPWMPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+
+    protected:
+      void write_state(float state) override;
+
+      PbHubComponent *parent_;
+      uint8_t pin_;
+    };
+
+    // ----------------------------------------------------
+    // ADC Sensor
+    // ----------------------------------------------------
+    class PbHubADC : public sensor::Sensor, public PollingComponent
+    {
+    public:
+      PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval = 1000);
+
+      void update() override;
+
+    protected:
+      PbHubComponent *parent_;
+      uint8_t pin_;
+    };
+
+    // ----------------------------------------------------
+    // Servo Output
+    // ----------------------------------------------------
+    class PbHubServo : public output::FloatOutput
+    {
+    public:
+      PbHubServo(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+
+    protected:
+      void write_state(float state) override;
+
+      PbHubComponent *parent_;
+      uint8_t pin_;
+    };
+
+    // ----------------------------------------------------
+    // RGB Light
+    // ----------------------------------------------------
+    class PbHubRGBLight : public light::LightOutput
+    {
+    public:
+      PbHubRGBLight(PbHubComponent *parent, uint8_t slot) : parent_(parent), slot_(slot) {}
+
+      light::LightTraits get_traits() override;
+      void write_state(light::LightState *state) override;
+
+      // NEW: allow YAML to specify LED count
+      void set_led_count(uint16_t c)
+      {
+        led_count_ = c;
+        initialized_ = false;
+      }
+
+    protected:
+      PbHubComponent *parent_;
+      uint8_t slot_;
+
+      // NEW: state for LED strip configuration
+      uint16_t led_count_{1};
+      bool initialized_{false};
+    };
   } // namespace pbhub
 } // namespace esphome

@@ -2,10 +2,26 @@
 
 Custom ESPHome component for the M5Stack PBHUB / PortHub.
 
+---
+
+## Description and Features
+
+This ESPHome component adds support for the [M5Stack PBHUB / PortHub](https://docs.m5stack.com/en/unit/pbhub), allowing you to easily expand the number of digital, analog, and PWM-capable I/O ports on your ESP32/ESP8266 device using I2C.
+
+**Features:**
+
+-   Digital GPIO (per-slot A/B pins, read/write)
+-   Analog input (ADC)
+-   PWM output (LED/servo control)
+-   RGB LED support
+-   Compatible with direct I2C or I2C multiplexers (e.g., PCA9548)
+
+---
+
 ## Installation
 
-You don’t need to copy sources manually.  
-Instead, reference this repository directly in your ESPHome YAML:
+You do **not** need to copy any source files manually.  
+Instead, add this repository as an external component in your ESPHome YAML:
 
 ```yaml
 external_components:
@@ -14,7 +30,56 @@ external_components:
       components: [pbhub]
 ```
 
-## Example Usage
+---
+
+## PBHUB Component Configuration
+
+The PBHUB connects to your ESP device via I2C. You can use it either directly on your I2C bus, or through an I2C multiplexer (e.g., PCA9548) if you have multiple I2C devices with address conflicts or want to isolate buses.
+
+### Direct Connection (SDA/SCL Pins)
+
+```yaml
+i2c:
+    - id: bus_a
+      sda: GPIO21
+      scl: GPIO22
+      frequency: 400kHz
+
+pbhub:
+    id: pb_hub
+    i2c_id: bus_a
+    address: 0x20 # Default PBHUB address
+```
+
+### Using an I2C Multiplexer (e.g., PCA9548)
+
+```yaml
+i2c:
+    - id: bus_a
+      sda: GPIO21
+      scl: GPIO22
+      frequency: 400kHz
+
+pca9548:
+    id: mux
+    i2c_id: bus_a
+
+pbhub:
+    id: pb_hub
+    i2c_id: mux.channel_3 # Select the multiplexer channel PBHUB is connected to
+    address: 0x20
+```
+
+**Note:**  
+You can have multiple PBHUBs, each with a different address or multiplexer channel.
+
+---
+
+## Usage Examples
+
+### 1. Digital GPIO (Read/Write)
+
+You can use PBHUB pins as digital outputs or inputs, just like regular GPIOs:
 
 ```yaml
 switch:
@@ -23,10 +88,74 @@ switch:
           pbhub: pb_hub
           number: 30
       name: 'Relay'
+
+binary_sensor:
+    - platform: gpio
+      pin:
+          pbhub: pb_hub
+          number: 31
+      name: 'Button'
 ```
 
-## Features
+### 2. Analog Input
 
--   Digital GPIO (per-slot A/B pins)
--   Analog input
--   Servo control
+Read analog values from PBHUB slots:
+
+```yaml
+sensor:
+    - platform: adc
+      pin:
+          pbhub: pb_hub
+          number: 32
+      name: 'Analog Sensor'
+      update_interval: 1s
+```
+
+### 3. PWM Output (Including Servo)
+
+Use PWM to control LEDs, motors, or servos attached to PBHUB:
+
+```yaml
+output:
+    - platform: ledc
+      pin:
+          pbhub: pb_hub
+          number: 33
+      id: pwm_output
+
+servo:
+    - output: pwm_output
+      id: servo_1
+      min_pulse_width: 500us
+      max_pulse_width: 2500us
+```
+
+### 4. RGB LED
+
+Drive an RGB LED connected to PBHUB:
+
+```yaml
+light:
+    - platform: rgb
+      red:
+          pin:
+              pbhub: pb_hub
+              number: 34
+      green:
+          pin:
+              pbhub: pb_hub
+              number: 35
+      blue:
+          pin:
+              pbhub: pb_hub
+              number: 36
+      name: 'RGB LED'
+```
+
+---
+
+## Need Help?
+
+For questions or issues, please open an issue on the [GitHub repository](https://github.com/ngorchilov/esphome-pbhub).
+
+Happy automating!
