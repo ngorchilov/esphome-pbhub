@@ -73,8 +73,8 @@ namespace esphome
         return false;
       }
       bool state = val & 0x01;
-      ESP_LOGD(TAG, "DREAD pin %u (slot=%u idx=%u) <- %s (reg=0x%02X val=0x%02X)",
-               pin, slot, idx, state ? "ON" : "OFF", reg, val);
+      ESP_LOGVV(TAG, "DREAD pin %u (slot=%u idx=%u) <- %s (reg=0x%02X val=0x%02X)",
+                pin, slot, idx, state ? "ON" : "OFF", reg, val);
       return state;
     }
 
@@ -90,7 +90,7 @@ namespace esphome
         return 0;
       }
       uint16_t value = static_cast<uint16_t>(buf[0] | (buf[1] << 8));
-      ESP_LOGD(TAG, "AREAD slot=%u <- %u (reg=0x%02X raw=%02X %02X)", slot, value, reg, buf[0], buf[1]);
+      ESP_LOGVV(TAG, "AREAD slot=%u <- %u (reg=0x%02X raw=%02X %02X)", slot, value, reg, buf[0], buf[1]);
       return value;
     }
 
@@ -99,7 +99,7 @@ namespace esphome
     {
       uint8_t reg = reg_pwm(slot, idx);
       auto err = this->write_register(reg, &duty, 1);
-      ESP_LOGD(TAG, "PWM slot=%u idx=%u duty=%u (reg=0x%02X err=%d)", slot, idx, duty, reg, err);
+      ESP_LOGVV(TAG, "PWM slot=%u idx=%u duty=%u (reg=0x%02X err=%d)", slot, idx, duty, reg, err);
     }
 
     // -------- Servo --------
@@ -107,7 +107,7 @@ namespace esphome
     {
       uint8_t reg = reg_servo_angle(slot, idx);
       auto err = this->write_register(reg, &angle, 1);
-      ESP_LOGD(TAG, "SERVO slot=%u idx=%u angle=%u (reg=0x%02X err=%d)", slot, idx, angle, reg, err);
+      ESP_LOGVV(TAG, "SERVO slot=%u idx=%u angle=%u (reg=0x%02X err=%d)", slot, idx, angle, reg, err);
     }
 
     void PbHubComponent::set_servo_pulse(uint8_t slot, uint8_t idx, uint16_t micros)
@@ -115,8 +115,8 @@ namespace esphome
       uint8_t reg = reg_servo_pulse(slot, idx);
       uint8_t data[2] = {uint8_t(micros & 0xFF), uint8_t(micros >> 8)};
       auto err = this->write_register(reg, data, 2);
-      ESP_LOGD(TAG, "SERVO slot=%u idx=%u pulse=%uus (reg=0x%02X data=%02X %02X err=%d)",
-               slot, idx, micros, reg, data[0], data[1], err);
+      ESP_LOGVV(TAG, "SERVO slot=%u idx=%u pulse=%uus (reg=0x%02X data=%02X %02X err=%d)",
+                slot, idx, micros, reg, data[0], data[1], err);
     }
 
     // -------- RGB Light --------
