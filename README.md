@@ -204,14 +204,15 @@ pin_number = slot × 10 + index
 
 where `index` is `0` for pin A and `1` for pin B of each slot.
 
+**Grove color mapping (HY2.0‑4P):**  
+black = GND, red = 5V, **white = pin / index 1**, **yellow = pin / index 0**.
+
+**Note:** On some Grove cables the white/yellow wires may be swapped. PBHUB numbering itself is fixed: Pin 0 is the signal pin at the end of the connector, opposite GND. Pin 1 is the signal pin between Pin 0 and 5V VCC.
+
 **Examples:**
 
--   Slot 3, pin A = 30
--   Slot 3, pin B = 31
--   Slot 5, pin A = 50
--   Slot 5, pin B = 51
-
-This numbering scheme helps you easily identify and configure pins corresponding to specific slots and their A/B pins.
+-   `00` → Slot 0, pin 0 (usually yellow)
+-   `31` → Slot 3, pin 1 (usually white)
 
 ---
 

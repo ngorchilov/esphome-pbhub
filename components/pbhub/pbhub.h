@@ -3,9 +3,19 @@
 #include "esphome/core/component.h"
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/core/gpio.h"
+// #ifdef USE_OUTPUT
 #include "esphome/components/output/float_output.h"
+// #endif
+#ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
+#endif
+#ifdef USE_LIGHT
 #include "esphome/components/light/light_output.h"
+#endif
+
+#if !defined(USE_OUTPUT)
+#warning "pbhub.cpp: USE_OUTPUT not defined in esphome/components/pbhub/pbhub.h"
+#endif
 
 namespace esphome
 {
@@ -169,13 +179,19 @@ namespace esphome
     // ----------------------------------------------------
     // PWM Output
     // ----------------------------------------------------
+#ifdef USE_OUTPUT
     class PbHubPWMPin : public output::FloatOutput
+#else
+    class PbHubPWMPin
+#endif
     {
     public:
       PbHubPWMPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
 
+#ifdef USE_OUTPUT
     protected:
       void write_state(float state) override;
+#endif
 
       PbHubComponent *parent_;
       uint8_t pin_;
@@ -184,6 +200,7 @@ namespace esphome
     // ----------------------------------------------------
     // ADC Sensor
     // ----------------------------------------------------
+#ifdef USE_SENSOR
     class PbHubADC : public sensor::Sensor, public PollingComponent
     {
     public:
@@ -193,19 +210,26 @@ namespace esphome
 
     protected:
       PbHubComponent *parent_;
-      uint8_t pin_;
+      uint8_t slot_;
     };
+#endif // USE_SENSOR
 
     // ----------------------------------------------------
     // Servo Output
     // ----------------------------------------------------
+#ifdef USE_OUTPUT
     class PbHubServo : public output::FloatOutput
+#else
+    class PbHubServo
+#endif
     {
     public:
       PbHubServo(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
 
+#ifdef USE_OUTPUT
     protected:
       void write_state(float state) override;
+#endif
 
       PbHubComponent *parent_;
       uint8_t pin_;
@@ -214,6 +238,7 @@ namespace esphome
     // ----------------------------------------------------
     // RGB Light
     // ----------------------------------------------------
+#ifdef USE_LIGHT
     class PbHubRGBLight : public light::LightOutput
     {
     public:
@@ -237,5 +262,6 @@ namespace esphome
       uint16_t led_count_{1};
       bool initialized_{false};
     };
+#endif // USE_LIGHT
   } // namespace pbhub
 } // namespace esphome

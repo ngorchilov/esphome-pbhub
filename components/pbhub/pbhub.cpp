@@ -1,6 +1,10 @@
 #include "pbhub.h"
 #include "esphome/core/log.h"
 
+// #if !defined(USE_OUTPUT)
+// #warning "pbhub.cpp: USE_OUTPUT not defined in esphome/components/pbhub/pbhub.cpp"
+// #endif
+
 namespace esphome
 {
   namespace pbhub
@@ -220,6 +224,7 @@ namespace esphome
     // -----------------------------------------------------------------------------
     // PWM wrapper
     // -----------------------------------------------------------------------------
+    // #ifdef USE_OUTPUT
     void PbHubPWMPin::write_state(float state)
     {
       if (!parent_)
@@ -229,10 +234,12 @@ namespace esphome
       uint8_t idx = parent_->idx_from_pin(pin_);
       parent_->set_pwm(slot, idx, duty);
     }
+    // #endif
 
     // -----------------------------------------------------------------------------
     // ADC wrapper
     // -----------------------------------------------------------------------------
+#ifdef USE_SENSOR
     PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval)
         : PollingComponent(update_interval), parent_(parent), slot_(slot) {}
 
@@ -243,9 +250,11 @@ namespace esphome
       uint16_t val = parent_->analog_read(slot_);
       publish_state(val);
     }
+#endif
     // -----------------------------------------------------------------------------
     // Servo wrapper
     // -----------------------------------------------------------------------------
+    // #ifdef USE_OUTPUT
     void PbHubServo::write_state(float state)
     {
       if (!parent_)
@@ -255,10 +264,12 @@ namespace esphome
       uint8_t idx = parent_->idx_from_pin(pin_);
       parent_->set_servo_angle(slot, idx, angle);
     }
+    // #endif
 
     // -----------------------------------------------------------------------------
     // RGB Light wrapper
     // -----------------------------------------------------------------------------
+#ifdef USE_LIGHT
     light::LightTraits PbHubRGBLight::get_traits()
     {
       auto traits = light::LightTraits();
@@ -285,9 +296,8 @@ namespace esphome
       uint8_t g = static_cast<uint8_t>(g_f * 255.0f);
       uint8_t b = static_cast<uint8_t>(b_f * 255.0f);
 
-      // however you apply the color; if you kept set_rgb():
-      parent_->set_rgb(slot_, r, g, b);
-      // (or if you prefer the fuller API, you could call fill_led_color(slot_, 0, led_count_, r, g, b))
+      parent_->fill_led_color(slot_, 0, led_count_, r, g, b);
     }
+#endif // USE_LIGHT
   } // namespace pbhub
 } // namespace esphome
