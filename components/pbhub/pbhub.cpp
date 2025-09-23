@@ -272,9 +272,8 @@ namespace esphome
 #ifdef USE_LIGHT
     light::LightTraits PbHubRGBLight::get_traits()
     {
-      auto traits = light::LightTraits();
-      traits.set_supports_brightness(false);
-      traits.set_supports_rgb(true);
+      light::LightTraits traits;
+      traits.set_supported_color_modes({light::ColorMode::RGB});
       return traits;
     }
 
@@ -283,20 +282,23 @@ namespace esphome
       if (!parent_)
         return;
 
-      // Ensure LED count is set once
-      if (!initialized_)
-      {
-        parent_->set_led_num(slot_, led_count_); // NEW/IMPORTANT: use led_count_
-        initialized_ = true;
-      }
+      auto color = state->current_values.get_color_mode();
+      float red, green, blue;
+      state->current_values_as_rgb(&red, &green, &blue);
+      float brightness = state->current_values.get_brightness(); // 0.0 – 1.0
 
-      float r_f, g_f, b_f;
-      state->current_values_as_rgb(&r_f, &g_f, &b_f);
-      uint8_t r = static_cast<uint8_t>(r_f * 255.0f);
-      uint8_t g = static_cast<uint8_t>(g_f * 255.0f);
-      uint8_t b = static_cast<uint8_t>(b_f * 255.0f);
+      uint8_t slot = this->slot_;
+      uint8_t idx = 0; // single LED per slot
 
-      parent_->fill_led_color(slot_, 0, led_count_, r, g, b);
+      // Apply RGB color
+      uint8_t r = static_cast<uint8_t>(red * 255.0f);
+      uint8_t g = static_cast<uint8_t>(green * 255.0f);
+      uint8_t b = static_cast<uint8_t>(blue * 255.0f);
+      parent_->set_led_color(slot, idx, r, g, b);
+
+      // Apply brightness through hub firmware support
+      uint8_t duty = static_cast<uint8_t>(brightness * 255.0f);
+      parent_->set_led_brightness(slot, duty);
     }
 #endif // USE_LIGHT
   } // namespace pbhub
