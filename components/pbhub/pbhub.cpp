@@ -216,9 +216,14 @@ namespace esphome
 
     std::string PbHubGPIOPin::dump_summary() const
     {
-      char buf[64];
-      snprintf(buf, sizeof(buf), "pbhub pin %u (inverted=%s)", pin_, inverted_ ? "yes" : "no");
-      return std::string(buf);
+      char buffer[64];
+      this->dump_summary(buffer, sizeof(buffer));
+      return std::string(buffer);
+    }
+
+    size_t PbHubGPIOPin::dump_summary(char *buffer, size_t len) const
+    {
+      return snprintf(buffer, len, "pbhub pin %u (inverted=%s)", pin_, inverted_ ? "yes" : "no");
     }
 
     // -----------------------------------------------------------------------------

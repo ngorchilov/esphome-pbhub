@@ -161,7 +161,11 @@ namespace esphome
       void pin_mode(gpio::Flags flags) override;
       bool digital_read() override;
       void digital_write(bool value) override;
-      std::string dump_summary() const override;
+      // ESPHome 2026.7 changed GPIOPin::dump_summary() to use a caller-provided
+      // buffer. Keep both overloads so this component remains compatible with
+      // older releases as well.
+      std::string dump_summary() const;
+      size_t dump_summary(char *buffer, size_t len) const;
       gpio::Flags get_flags() const override { return flags_; }
 
       void set_parent(PbHubComponent *p) { parent_ = p; }
