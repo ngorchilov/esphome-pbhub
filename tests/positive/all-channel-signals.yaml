@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-phase1-endpoints
+  name: pbhub-all-channel-signals
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -10,62 +10,74 @@ pbhub:
 
 output:
   - platform: pbhub
-    id: endpoint_0
+    id: channel_0_signal_a
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
     mode: pwm
   - platform: pbhub
-    id: endpoint_1
+    id: channel_0_signal_b
     pbhub_id: test_hub
-    pin: 1
+    channel: 0
+    signal: b
     mode: pwm
   - platform: pbhub
-    id: endpoint_10
+    id: channel_1_signal_a
     pbhub_id: test_hub
-    pin: 10
+    channel: 1
+    signal: a
     mode: pwm
   - platform: pbhub
-    id: endpoint_11
+    id: channel_1_signal_b
     pbhub_id: test_hub
-    pin: 11
+    channel: 1
+    signal: b
     mode: pwm
   - platform: pbhub
-    id: endpoint_20
+    id: channel_2_signal_a
     pbhub_id: test_hub
-    pin: 20
+    channel: 2
+    signal: a
     mode: pwm
   - platform: pbhub
-    id: endpoint_21
+    id: channel_2_signal_b
     pbhub_id: test_hub
-    pin: 21
+    channel: 2
+    signal: b
     mode: pwm
   - platform: pbhub
-    id: endpoint_30
+    id: channel_3_signal_a
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: a
     mode: pwm
   - platform: pbhub
-    id: endpoint_31
+    id: channel_3_signal_b
     pbhub_id: test_hub
-    pin: 31
+    channel: 3
+    signal: b
     mode: pwm
   - platform: pbhub
-    id: endpoint_40
+    id: channel_4_signal_a
     pbhub_id: test_hub
-    pin: 40
+    channel: 4
+    signal: a
     mode: pwm
   - platform: pbhub
-    id: endpoint_41
+    id: channel_4_signal_b
     pbhub_id: test_hub
-    pin: 41
+    channel: 4
+    signal: b
     mode: pwm
   - platform: pbhub
-    id: endpoint_50
+    id: channel_5_signal_a
     pbhub_id: test_hub
-    pin: 50
+    channel: 5
+    signal: a
     mode: pwm
   - platform: pbhub
-    id: endpoint_51
+    id: channel_5_signal_b
     pbhub_id: test_hub
-    pin: 51
+    channel: 5
+    signal: b
     mode: pwm

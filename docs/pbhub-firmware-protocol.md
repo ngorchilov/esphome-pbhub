@@ -189,17 +189,13 @@ non-contiguous base table:
 
 There is no channel at base `0x90`.
 
-The ESPHome component represents an endpoint as:
-
-```text
-endpoint = channel * 10 + index
-```
-
-The only valid endpoint values are:
-
-```text
-0, 1, 10, 11, 20, 21, 30, 31, 40, 41, 50, 51
-```
+A firmware endpoint is the pair of a channel `0..5` and a signal index: index 0
+is signal A and index 1 is signal B. The ESPHome YAML represents those concepts
+directly as `channel` and, for features that can select either line, `signal: a`
+or `signal: b`. ADC has no signal choice because the firmware implements it only
+on A; RGB likewise has no signal choice because the firmware implements it only
+on B. The component converts that public representation to an internal
+channel/index pair before constructing a register.
 
 The firmware decoder has an undocumented alias: `0x00` through `0x0F` operate
 on channel 0 because a zero high nibble passes the later channel-range check.
@@ -500,7 +496,8 @@ exclusively because each rendered state uses a fill write.
 
 There is no active-mode register. Most readbacks are cached command values, not
 the current pin configuration. A host should prevent multiple ESPHome entities
-from owning the same endpoint rather than allowing runtime mode fights.
+from owning the same physical channel/signal pair rather than allowing runtime
+mode fights.
 
 ## Global registers
 
@@ -559,7 +556,7 @@ remediation work belongs exclusively to the firmware project.
 | ADC timeout can return a stale valid sample | Undetectable loss of freshness | Document limitation; do not promise per-sample freshness |
 | I2C ACK is not a semantic or physical-state confirmation | Rejected values can look successful | Validate before writing; treat entity state as commanded/desired and track transport health |
 | Error handling and incomplete-write recovery are defective | Persistent faults or repeated 500 ms stalls | Rate-limit recovery probes; invalidate applied-state caches; hardware fault testing |
-| Modes silently replace each other | Configured entities fight over a pin | Enforce one owner per endpoint |
+| Modes silently replace each other | Configured entities fight over a signal | Enforce one owner per channel/signal pair |
 | Fixed software PWM | No RTTTL pitch or load-specific frequency | Document about 392 Hz; reject/ignore frequency requests visibly |
 | PWM duties 0 and 255 have edge-state defects | Glitch at zero or stale low at full scale | Use digital low/high for encoded extrema; PWM registers only for 1 through 254 |
 | PWM/servo depend on main-loop polling | Jitter and stretched pulses under load | Rate-limit I2C work; hardware stress tests |

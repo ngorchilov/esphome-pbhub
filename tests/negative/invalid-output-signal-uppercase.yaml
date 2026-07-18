@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-invalid-rgb-slot-negative
+  name: pbhub-invalid-signal-uppercase
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -8,9 +8,10 @@ pbhub:
   id: test_hub
   i2c_id: test_i2c
 
-light:
+output:
   - platform: pbhub
-    id: invalid_rgb
+    id: invalid_output
     pbhub_id: test_hub
-    slot: -1
-    num_leds: 1
+    channel: 0
+    signal: A
+    mode: pwm

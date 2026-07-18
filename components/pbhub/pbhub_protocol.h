@@ -7,7 +7,10 @@
 namespace esphome::pbhub::protocol {
 
 inline constexpr uint8_t CHANNEL_COUNT = 6;
-inline constexpr uint8_t ENDPOINT_COUNT = 12;
+inline constexpr uint8_t SIGNAL_A_INDEX = 0;
+inline constexpr uint8_t SIGNAL_B_INDEX = 1;
+inline constexpr uint8_t SIGNAL_COUNT = 2;
+inline constexpr uint8_t ENDPOINT_COUNT = CHANNEL_COUNT * SIGNAL_COUNT;
 inline constexpr uint16_t MAX_LED_COUNT = 74;
 inline constexpr uint8_t EXPECTED_FIRMWARE_VERSION = 2;
 inline constexpr float NOMINAL_PWM_FREQUENCY_HZ = 1'000'000.0f / 2550.0f;
@@ -66,21 +69,13 @@ enum class PwmDriveMode : uint8_t {
 constexpr bool is_valid_channel(uint8_t channel) { return channel < CHANNEL_COUNT; }
 
 constexpr bool is_valid(Endpoint endpoint) {
-  return is_valid_channel(endpoint.channel) && endpoint.index < 2;
-}
-
-constexpr bool decode_endpoint(uint8_t encoded, Endpoint &out) {
-  const Endpoint candidate{static_cast<uint8_t>(encoded / 10), static_cast<uint8_t>(encoded % 10)};
-  if (!is_valid(candidate))
-    return false;
-  out = candidate;
-  return true;
+  return is_valid_channel(endpoint.channel) && endpoint.index < SIGNAL_COUNT;
 }
 
 constexpr bool endpoint_ordinal(Endpoint endpoint, uint8_t &out) {
   if (!is_valid(endpoint))
     return false;
-  out = static_cast<uint8_t>(endpoint.channel * 2 + endpoint.index);
+  out = static_cast<uint8_t>(endpoint.channel * SIGNAL_COUNT + endpoint.index);
   return true;
 }
 

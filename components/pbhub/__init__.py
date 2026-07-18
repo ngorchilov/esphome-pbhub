@@ -3,6 +3,7 @@ import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.components import i2c
 from esphome.const import (
+    CONF_CHANNEL,
     CONF_ID,
     CONF_IDLE_LEVEL,
     CONF_MAX_LEVEL,
@@ -11,7 +12,6 @@ from esphome.const import (
     CONF_NUM_LEDS,
     CONF_OUTPUT,
     CONF_OUTPUT_ID,
-    CONF_PIN,
     CONF_PLATFORM,
     CONF_TRANSITION_LENGTH,
 )
@@ -21,7 +21,7 @@ DEPENDENCIES = ["i2c"]
 MULTI_CONF = True
 
 CONF_PBHUB_ID = "pbhub_id"
-CONF_SLOT = "slot"
+CONF_SIGNAL = "signal"
 CONF_LED_TIMING_MODE = "led_timing_mode"
 
 OUTPUT_MODE_PWM = "pwm"
@@ -29,30 +29,27 @@ OUTPUT_MODE_SERVO = "servo"
 SERVO_MIN_LEVEL = 0.025
 SERVO_MAX_LEVEL = 0.125
 
-VALID_ENDPOINTS = (0, 1, 10, 11, 20, 21, 30, 31, 40, 41, 50, 51)
-VALID_ENDPOINTS_TEXT = ", ".join(str(endpoint) for endpoint in VALID_ENDPOINTS)
+SIGNAL_A_INDEX = 0
+SIGNAL_B_INDEX = 1
+SIGNAL_INDEX = {"a": SIGNAL_A_INDEX, "b": SIGNAL_B_INDEX}
 
 pbhub_ns = cg.esphome_ns.namespace("pbhub")
 PbHubComponent = pbhub_ns.class_("PbHubComponent", cg.Component, i2c.I2CDevice)
 EndpointOwner = pbhub_ns.enum("EndpointOwner", is_class=True)
 
 
-def validate_slot(value):
+def validate_channel(value):
     value = cv.int_(value)
     if not 0 <= value <= 5:
-        raise cv.Invalid("PBHUB slot must be an integer from 0 to 5")
+        raise cv.Invalid("PBHUB channel must be an integer from 0 to 5")
     return value
 
 
-def validate_endpoint(value):
-    value = cv.int_(value)
-    slot, index = divmod(value, 10)
-    if not 0 <= slot <= 5 or index not in (0, 1):
-        raise cv.Invalid(
-            "PBHUB pin must use slot * 10 + signal, where slot is 0..5 and "
-            f"signal is 0 or 1; accepted values: {VALID_ENDPOINTS_TEXT}"
-        )
-    return value
+validate_signal = cv.enum(SIGNAL_INDEX)
+
+
+def signal_index(value):
+    return SIGNAL_INDEX[str(value)]
 
 
 def validate_led_count(value):
@@ -102,8 +99,8 @@ def _collect_endpoint_claims(full_config):
     specs = (
         (
             "output",
-            CONF_PIN,
-            lambda entry: entry[CONF_PIN],
+            CONF_SIGNAL,
+            lambda entry: signal_index(entry[CONF_SIGNAL]),
             lambda entry: (
                 "servo output"
                 if entry.get(CONF_MODE) == OUTPUT_MODE_SERVO
@@ -112,31 +109,31 @@ def _collect_endpoint_claims(full_config):
         ),
         (
             "sensor",
-            CONF_SLOT,
-            lambda entry: entry[CONF_SLOT] * 10,
+            CONF_CHANNEL,
+            lambda _entry: 0,
             lambda _entry: "ADC sensor",
         ),
         (
             "light",
-            CONF_SLOT,
-            lambda entry: entry[CONF_SLOT] * 10 + 1,
+            CONF_CHANNEL,
+            lambda _entry: 1,
             lambda _entry: "RGB light",
         ),
         (
             "binary_sensor",
-            CONF_PIN,
-            lambda entry: entry[CONF_PIN],
+            CONF_SIGNAL,
+            lambda entry: signal_index(entry[CONF_SIGNAL]),
             lambda _entry: "digital input",
         ),
         (
             "switch",
-            CONF_PIN,
-            lambda entry: entry[CONF_PIN],
+            CONF_SIGNAL,
+            lambda entry: signal_index(entry[CONF_SIGNAL]),
             lambda _entry: "digital output",
         ),
     )
     claims = []
-    for rank, (domain, field, endpoint_fn, label_fn) in enumerate(specs):
+    for rank, (domain, field, signal_fn, label_fn) in enumerate(specs):
         for index, entry in enumerate(full_config.get(domain, [])):
             if entry.get(CONF_PLATFORM) != "pbhub":
                 continue
@@ -145,7 +142,8 @@ def _collect_endpoint_claims(full_config):
             claims.append(
                 {
                     "hub": str(entry[CONF_PBHUB_ID]),
-                    "endpoint": endpoint_fn(entry),
+                    "channel": entry[CONF_CHANNEL],
+                    "signal": signal_fn(entry),
                     "rank": rank,
                     "index": index,
                     "path": path,
@@ -159,7 +157,8 @@ def _collect_endpoint_claims(full_config):
         claims,
         key=lambda claim: (
             claim["hub"],
-            claim["endpoint"],
+            claim["channel"],
+            claim["signal"],
             claim["rank"],
             claim["index"],
         ),
@@ -276,15 +275,16 @@ def _final_validate(config):
 
     claimed = {}
     for claim in _collect_endpoint_claims(full_config):
-        key = (claim["hub"], claim["endpoint"])
+        key = (claim["hub"], claim["channel"], claim["signal"])
         existing = claimed.get(key)
         if existing is None:
             claimed[key] = claim
             continue
 
         raise cv.FinalExternalInvalid(
-            f"PBHUB endpoint {claim['endpoint']} on hub '{claim['hub']}' is "
-            f"claimed by both {existing['label']} '{existing['entity_id']}' at "
+            f"PBHUB channel {claim['channel']} signal "
+            f"{'AB'[claim['signal']]} on hub '{claim['hub']}' is claimed by "
+            f"both {existing['label']} '{existing['entity_id']}' at "
             f"{existing['path_text']} and {claim['label']} "
             f"'{claim['entity_id']}' at {claim['path_text']}",
             path=[cv.ROOT_CONFIG_PATH, *claim["path"], claim["field"]],

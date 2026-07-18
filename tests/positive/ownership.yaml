@@ -10,20 +10,21 @@ pbhub:
 
 output:
   - platform: pbhub
-    id: pwm_endpoint_0
+    id: pwm_channel_0a
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
     mode: pwm
 
 sensor:
   - platform: pbhub
-    id: adc_endpoint_10
+    id: adc_channel_1a
     pbhub_id: test_hub
-    slot: 1
+    channel: 1
 
 light:
   - platform: pbhub
-    id: rgb_endpoint_11
+    id: rgb_channel_1b
     pbhub_id: test_hub
-    slot: 1
+    channel: 1
     num_leds: 12

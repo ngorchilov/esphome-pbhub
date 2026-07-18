@@ -13,22 +13,26 @@ output:
   - platform: pbhub
     id: calibrated_output
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
     mode: servo
   - platform: pbhub
     id: default_output
     pbhub_id: test_hub
-    pin: 10
+    channel: 1
+    signal: b
     mode: servo
   - platform: pbhub
     id: reversed_output
     pbhub_id: test_hub
-    pin: 20
+    channel: 2
+    signal: a
     mode: servo
   - platform: pbhub
     id: direct_neutral_output
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: b
     mode: servo
     inverted: false
     min_power: 0%

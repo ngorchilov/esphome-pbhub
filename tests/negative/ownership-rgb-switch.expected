@@ -1,1 +1,1 @@
-PBHUB endpoint 21 on hub 'test_hub' is claimed by both RGB light 'rgb_conflict' at light[0] and digital output 'switch_conflict' at switch[0]
+PBHUB channel 2 signal B on hub 'test_hub' is claimed by both RGB light 'rgb_conflict' at light[0] and digital output 'switch_conflict' at switch[0]

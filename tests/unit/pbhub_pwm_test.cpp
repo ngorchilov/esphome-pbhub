@@ -85,12 +85,12 @@ class ScriptedI2CBus final : public i2c::I2CBus {
   size_t transaction_count_{0};
 };
 
-static void setup_ready_pwm(PbHubComponent &hub, PbHubPWMOutput &pwm, ScriptedI2CBus &bus, uint8_t endpoint,
-                            uint8_t digital_register) {
+static void setup_ready_pwm(PbHubComponent &hub, PbHubPWMOutput &pwm, ScriptedI2CBus &bus, uint8_t channel,
+                            uint8_t signal_index, uint8_t digital_register) {
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   CHECK(pwm.get_setup_priority() > hub.get_setup_priority());
-  CHECK(hub.claim_endpoint(endpoint, EndpointOwner::PWM, "pwm"));
+  CHECK(hub.claim_endpoint(channel, signal_index, EndpointOwner::PWM, "pwm"));
   CHECK(hub.register_recovery_client(&pwm));
 
   pwm.setup();
@@ -107,8 +107,8 @@ static void setup_ready_pwm(PbHubComponent &hub, PbHubPWMOutput &pwm, ScriptedI2
 static void test_startup_extrema_intermediate_levels_and_cache() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput pwm(&hub, 21);
-  setup_ready_pwm(hub, pwm, bus, 21, 0x61);
+  PbHubPWMOutput pwm(&hub, 2, 1);
+  setup_ready_pwm(hub, pwm, bus, 2, 1, 0x61);
 
   const size_t after_startup = bus.transaction_count();
   pwm.set_level(0.0f);
@@ -150,13 +150,13 @@ static void test_startup_extrema_intermediate_levels_and_cache() {
 static void test_startup_transforms_and_preexisting_desired_level() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput inverted(&hub, 0);
-  PbHubPWMOutput preseeded(&hub, 1);
+  PbHubPWMOutput inverted(&hub, 0, 0);
+  PbHubPWMOutput preseeded(&hub, 0, 1);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(0, EndpointOwner::PWM, "inverted"));
-  CHECK(hub.claim_endpoint(1, EndpointOwner::PWM, "preseeded"));
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::PWM, "inverted"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::PWM, "preseeded"));
   CHECK(hub.register_recovery_client(&inverted));
   CHECK(hub.register_recovery_client(&preseeded));
 
@@ -177,8 +177,8 @@ static void test_startup_transforms_and_preexisting_desired_level() {
 static void test_inversion_and_power_transforms() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput pwm(&hub, 1);
-  setup_ready_pwm(hub, pwm, bus, 1, 0x41);
+  PbHubPWMOutput pwm(&hub, 0, 1);
+  setup_ready_pwm(hub, pwm, bus, 0, 1, 0x41);
 
   pwm.set_min_power(0.2f);
   pwm.set_max_power(0.8f);
@@ -203,8 +203,8 @@ static void test_inversion_and_power_transforms() {
 static void test_failed_write_offline_last_desired_and_recovery() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput pwm(&hub, 1);
-  setup_ready_pwm(hub, pwm, bus, 1, 0x41);
+  PbHubPWMOutput pwm(&hub, 0, 1);
+  setup_ready_pwm(hub, pwm, bus, 0, 1, 0x41);
 
   bus.expect_write(0x61, 0x43, {64});
   pwm.set_level(0.25f);
@@ -236,8 +236,8 @@ static void test_failed_write_offline_last_desired_and_recovery() {
 static void test_frequency_nonfinite_and_infinite_levels() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput pwm(&hub, 1);
-  setup_ready_pwm(hub, pwm, bus, 1, 0x41);
+  PbHubPWMOutput pwm(&hub, 0, 1);
+  setup_ready_pwm(hub, pwm, bus, 0, 1, 0x41);
   unit_test_warning_count = 0;
 
   bus.expect_write(0x61, 0x43, {128});
@@ -270,16 +270,16 @@ static void test_frequency_nonfinite_and_infinite_levels() {
   CHECK(bus.empty());
 }
 
-static void test_same_slot_adc_a_and_pwm_b_are_independent() {
+static void test_same_channel_adc_a_and_pwm_b_are_independent() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput pwm(&hub, 21);
+  PbHubPWMOutput pwm(&hub, 2, 1);
   PbHubADC adc(&hub, 2);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(21, EndpointOwner::PWM, "pwm_b"));
-  CHECK(hub.claim_endpoint(20, EndpointOwner::ADC, "adc_a"));
+  CHECK(hub.claim_endpoint(2, 1, EndpointOwner::PWM, "pwm_b"));
+  CHECK(hub.claim_endpoint(2, 0, EndpointOwner::ADC, "adc_a"));
   CHECK(hub.register_recovery_client(&pwm));
   pwm.setup();
 
@@ -318,7 +318,7 @@ int main() {
   test_inversion_and_power_transforms();
   test_failed_write_offline_last_desired_and_recovery();
   test_frequency_nonfinite_and_infinite_levels();
-  test_same_slot_adc_a_and_pwm_b_are_independent();
+  test_same_channel_adc_a_and_pwm_b_are_independent();
 
   if (failures != 0)
     std::cerr << failures << " PBHUB PWM checks failed\n";

@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-invalid-slot-six
+  name: pbhub-bad-output-channel-low
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -8,8 +8,10 @@ pbhub:
   id: test_hub
   i2c_id: test_i2c
 
-sensor:
+output:
   - platform: pbhub
-    id: invalid_adc
+    id: invalid_output
     pbhub_id: test_hub
-    slot: 6
+    channel: -1
+    signal: a
+    mode: pwm

@@ -26,8 +26,8 @@ FRAMEWORK_FIXTURES = {
 }
 
 POSITIVE_FIXTURES = {
-    "adc-slots.yaml",
-    "all-endpoints.yaml",
+    "adc-channels.yaml",
+    "all-channel-signals.yaml",
     "digital-entities.yaml",
     "hub-only.yaml",
     "multi-hub.yaml",
@@ -119,13 +119,24 @@ TOPOLOGY_GENERATED_SOURCE_CHECKS = (
     "multiplexed_hub_3->set_i2c_address(0x61);",
     "multiplexed_hub_4->set_i2c_bus(test_multiplexer_channel_4);",
     "multiplexed_hub_4->set_i2c_address(0x61);",
-    "new(topology_pwm) pbhub::PbHubPWMOutput(feature_hub, 11);",
-    "new(topology_servo_output) pbhub::PbHubServoOutput(feature_hub, 20);",
+    "new(topology_pwm) pbhub::PbHubPWMOutput(feature_hub, 1, 1);",
+    "new(topology_servo_output) pbhub::PbHubServoOutput(feature_hub, 2, 0);",
+    'feature_hub->claim_endpoint(2, 1, pbhub::EndpointOwner::RGB, "topology_rgb");',
 )
 
 GENERATED_SOURCE_CHECKS = {
     "multi-hub.yaml": TOPOLOGY_GENERATED_SOURCE_CHECKS,
     "arduino-topologies.yaml": TOPOLOGY_GENERATED_SOURCE_CHECKS,
+    "all-channel-signals.yaml": (
+        "new(channel_0_signal_a) pbhub::PbHubPWMOutput(test_hub, 0, 0);",
+        "new(channel_0_signal_b) pbhub::PbHubPWMOutput(test_hub, 0, 1);",
+        "new(channel_5_signal_a) pbhub::PbHubPWMOutput(test_hub, 5, 0);",
+        "new(channel_5_signal_b) pbhub::PbHubPWMOutput(test_hub, 5, 1);",
+    ),
+    "adc-channels.yaml": (
+        'test_hub->claim_endpoint(0, 0, pbhub::EndpointOwner::ADC, "adc_channel_0");',
+        'test_hub->claim_endpoint(5, 0, pbhub::EndpointOwner::ADC, "adc_channel_5");',
+    ),
     "rgb-bounds.yaml": (
         "rgb_always_off_output->set_startup_off(true);",
         "rgb_restore_default_output->set_startup_off(false);",

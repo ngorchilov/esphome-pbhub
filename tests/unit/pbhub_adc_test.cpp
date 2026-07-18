@@ -83,7 +83,7 @@ static void ready_hub(PbHubComponent &hub, ScriptedI2CBus &bus) {
   CHECK(hub.is_hub_ready());
 }
 
-static void test_all_slots_are_serialized_and_little_endian() {
+static void test_all_channels_are_serialized_and_little_endian() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
   std::array<PbHubADC, protocol::CHANNEL_COUNT> sensors{{
@@ -91,8 +91,8 @@ static void test_all_slots_are_serialized_and_little_endian() {
   }};
   const std::array<uint16_t, protocol::CHANNEL_COUNT> values{{0, 1, 0x0123, 0x0800, 0x0FFE, 0x0FFF}};
 
-  for (uint8_t slot = 0; slot < protocol::CHANNEL_COUNT; slot++)
-    CHECK(hub.claim_endpoint(slot * 10U, EndpointOwner::ADC, "adc"));
+  for (uint8_t channel = 0; channel < protocol::CHANNEL_COUNT; channel++)
+    CHECK(hub.claim_endpoint(channel, 0, EndpointOwner::ADC, "adc"));
   ready_hub(hub, bus);
   CHECK(sensors[0].get_update_interval() == 250);
   CHECK(sensors[1].get_update_interval() == 1000);
@@ -101,17 +101,17 @@ static void test_all_slots_are_serialized_and_little_endian() {
     sensor.update();
 
   const size_t before_reads = bus.transaction_count();
-  for (uint8_t slot = 0; slot < protocol::CHANNEL_COUNT; slot++) {
-    const uint16_t value = values[slot];
-    bus.expect_read(0x61, protocol::CHANNEL_BASES[slot] + 0x06,
+  for (uint8_t channel = 0; channel < protocol::CHANNEL_COUNT; channel++) {
+    const uint16_t value = values[channel];
+    bus.expect_read(0x61, protocol::CHANNEL_BASES[channel] + 0x06,
                     {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8)});
     hub.loop();
-    CHECK(bus.transaction_count() == before_reads + slot + 1);
-    CHECK(sensors[slot].has_state());
-    CHECK(sensors[slot].state == static_cast<float>(value));
-    CHECK(sensors[slot].test_publish_count() == 1);
-    if (slot + 1 < protocol::CHANNEL_COUNT)
-      CHECK(!sensors[slot + 1].has_state());
+    CHECK(bus.transaction_count() == before_reads + channel + 1);
+    CHECK(sensors[channel].has_state());
+    CHECK(sensors[channel].state == static_cast<float>(value));
+    CHECK(sensors[channel].test_publish_count() == 1);
+    if (channel + 1 < protocol::CHANNEL_COUNT)
+      CHECK(!sensors[channel + 1].has_state());
   }
 
   sensors[0].update();
@@ -140,7 +140,7 @@ static void test_initial_failure_stays_unknown() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
   PbHubADC sensor(&hub, 0);
-  CHECK(hub.claim_endpoint(0, EndpointOwner::ADC, "adc"));
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::ADC, "adc"));
   ready_hub(hub, bus);
 
   sensor.update();
@@ -153,7 +153,7 @@ static void test_initial_failure_stays_unknown() {
   CHECK(bus.empty());
 }
 
-static void test_invalid_runtime_slot_has_no_side_effect() {
+static void test_invalid_runtime_channel_has_no_side_effect() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
   PbHubADC invalid(&hub, protocol::CHANNEL_COUNT);
@@ -171,9 +171,9 @@ static void test_invalid_runtime_slot_has_no_side_effect() {
 
 int main() {
   set_unit_test_millis(1000);
-  test_all_slots_are_serialized_and_little_endian();
+  test_all_channels_are_serialized_and_little_endian();
   test_initial_failure_stays_unknown();
-  test_invalid_runtime_slot_has_no_side_effect();
+  test_invalid_runtime_channel_has_no_side_effect();
 
   if (failures != 0)
     std::cerr << failures << " ADC checks failed\n";

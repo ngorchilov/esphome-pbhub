@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-invalid-switch-channel
+
+packages:
+  common: !include ../common/esp32-idf.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+switch:
+  - platform: pbhub
+    id: invalid_switch
+    pbhub_id: test_hub
+    channel: -1
+    signal: a

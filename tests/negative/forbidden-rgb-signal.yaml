@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-invalid-binary-pin
+  name: pbhub-forbidden-rgb-signal
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -8,8 +8,10 @@ pbhub:
   id: test_hub
   i2c_id: test_i2c
 
-binary_sensor:
+light:
   - platform: pbhub
-    id: invalid_input
+    id: invalid_rgb
     pbhub_id: test_hub
-    pin: 2
+    channel: 0
+    signal: b
+    num_leds: 1

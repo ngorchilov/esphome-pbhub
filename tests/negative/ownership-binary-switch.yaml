@@ -12,10 +12,12 @@ binary_sensor:
   - platform: pbhub
     id: input_conflict
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: a
 
 switch:
   - platform: pbhub
     id: switch_conflict
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: a

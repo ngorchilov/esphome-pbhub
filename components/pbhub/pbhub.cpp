@@ -47,6 +47,14 @@ static const char *endpoint_owner_name(EndpointOwner owner) {
   return "unknown";
 }
 
+static char signal_name(uint8_t signal_index) {
+  if (signal_index == protocol::SIGNAL_A_INDEX)
+    return 'A';
+  if (signal_index == protocol::SIGNAL_B_INDEX)
+    return 'B';
+  return '?';
+}
+
 static const char *i2c_error_name(i2c::ErrorCode error) {
   switch (error) {
     case i2c::ERROR_OK:
@@ -149,10 +157,12 @@ bool PbHubComponent::queue_rgb_write(PbHubRGBWriteClient *client) {
   return false;
 }
 
-bool PbHubComponent::claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owner, const char *owner_id) {
-  protocol::Endpoint endpoint{};
-  if (!protocol::decode_endpoint(encoded_endpoint, endpoint) || !is_valid_endpoint_owner(owner) || owner_id == nullptr) {
-    ESP_LOGE(TAG, "Rejected invalid PBHUB endpoint claim for encoded endpoint %u", encoded_endpoint);
+bool PbHubComponent::claim_endpoint(uint8_t channel, uint8_t signal_index, EndpointOwner owner,
+                                    const char *owner_id) {
+  const protocol::Endpoint endpoint{channel, signal_index};
+  if (!can_own_endpoint(endpoint, owner) || owner_id == nullptr) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB %s claim for channel %u signal index %u", endpoint_owner_name(owner),
+             channel, signal_index);
     this->configuration_error_ = true;
     return false;
   }
@@ -160,15 +170,17 @@ bool PbHubComponent::claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owne
   const auto *existing = this->endpoint_claims_.find(endpoint);
   if (existing == nullptr) {
     if (!this->endpoint_claims_.claim(endpoint, owner, owner_id)) {
-      ESP_LOGE(TAG, "Rejected invalid PBHUB endpoint claim for encoded endpoint %u", encoded_endpoint);
+      ESP_LOGE(TAG, "Rejected invalid PBHUB endpoint claim for channel %u signal %c", channel,
+               signal_name(signal_index));
       this->configuration_error_ = true;
       return false;
     }
     return true;
   }
 
-  ESP_LOGE(TAG, "PBHUB endpoint %u is claimed by both %s '%s' and %s '%s'", encoded_endpoint,
-           endpoint_owner_name(existing->owner), existing->owner_id, endpoint_owner_name(owner), owner_id);
+  ESP_LOGE(TAG, "PBHUB channel %u signal %c is claimed by both %s '%s' and %s '%s'", channel,
+           signal_name(signal_index), endpoint_owner_name(existing->owner), existing->owner_id,
+           endpoint_owner_name(owner), owner_id);
   this->endpoint_claims_.claim(endpoint, owner, owner_id);
   this->configuration_error_ = true;
   return false;
@@ -366,13 +378,14 @@ bool PbHubComponent::write_digital(protocol::Endpoint endpoint, bool value) {
   return this->write_command_("digital write", command);
 }
 
-bool PbHubComponent::read_adc(uint8_t slot, uint16_t &value) {
+bool PbHubComponent::read_adc(uint8_t channel, uint16_t &value) {
   protocol::ReadCommand command{};
-  if (!protocol::make_adc_read(slot, command)) {
-    ESP_LOGE(TAG, "Rejected invalid PBHUB ADC slot %u", slot);
+  if (!protocol::make_adc_read(channel, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB ADC channel %u", channel);
     return false;
   }
-  if (!this->endpoint_owned_by_({slot, 0}, EndpointOwner::ADC, "ADC read") || !this->feature_io_allowed_())
+  if (!this->endpoint_owned_by_({channel, protocol::SIGNAL_A_INDEX}, EndpointOwner::ADC, "ADC read") ||
+      !this->feature_io_allowed_())
     return false;
 
   std::array<uint8_t, 2> response{};
@@ -421,10 +434,10 @@ bool PbHubComponent::write_servo_detach(protocol::Endpoint endpoint) {
 bool PbHubComponent::configure_leds(uint8_t channel, uint16_t count) {
   protocol::WriteCommand<2> command{};
   if (!protocol::make_led_count_write(channel, count, command)) {
-    ESP_LOGE(TAG, "Rejected invalid PBHUB LED channel or count %u", count);
+    ESP_LOGE(TAG, "Rejected invalid PBHUB LED configuration: channel=%u count=%u", channel, count);
     return false;
   }
-  if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED count write"))
+  if (!this->endpoint_owned_by_({channel, protocol::SIGNAL_B_INDEX}, EndpointOwner::RGB, "LED count write"))
     return false;
   return this->write_command_("LED count write", command);
 }
@@ -435,7 +448,7 @@ bool PbHubComponent::set_led_full_brightness(uint8_t channel) {
     ESP_LOGE(TAG, "Rejected invalid PBHUB LED channel %u", channel);
     return false;
   }
-  if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED brightness write"))
+  if (!this->endpoint_owned_by_({channel, protocol::SIGNAL_B_INDEX}, EndpointOwner::RGB, "LED brightness write"))
     return false;
   return this->write_command_("LED brightness write", command);
 }
@@ -448,7 +461,7 @@ bool PbHubComponent::fill_leds(uint8_t channel, uint16_t configured_count, uint1
              configured_count, start, count);
     return false;
   }
-  if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED fill write"))
+  if (!this->endpoint_owned_by_({channel, protocol::SIGNAL_B_INDEX}, EndpointOwner::RGB, "LED fill write"))
     return false;
   if (!this->write_command_("LED fill write", command))
     return false;
@@ -458,10 +471,12 @@ bool PbHubComponent::fill_leds(uint8_t channel, uint16_t configured_count, uint1
 }
 
 #ifdef USE_BINARY_SENSOR
-PbHubBinarySensor::PbHubBinarySensor(PbHubComponent *parent, uint8_t pin, uint32_t update_interval)
+PbHubBinarySensor::PbHubBinarySensor(PbHubComponent *parent, uint8_t channel, uint8_t signal_index,
+                                     uint32_t update_interval)
     : PollingComponent(update_interval),
       parent_(parent),
-      endpoint_valid_(protocol::decode_endpoint(pin, this->endpoint_)) {}
+      endpoint_{channel, signal_index},
+      endpoint_valid_(protocol::is_valid(this->endpoint_)) {}
 
 void PbHubBinarySensor::update() {
   if (this->parent_ != nullptr)
@@ -478,14 +493,15 @@ void PbHubBinarySensor::perform_poll() {
 
 void PbHubBinarySensor::dump_config() {
   LOG_BINARY_SENSOR("", "PBHUB Binary Sensor", this);
-  ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->endpoint_.channel * 10U + this->endpoint_.index);
+  ESP_LOGCONFIG(TAG, "  Channel: %u", this->endpoint_.channel);
+  ESP_LOGCONFIG(TAG, "  Signal: %c", signal_name(this->endpoint_.index));
   LOG_UPDATE_INTERVAL(this);
 }
 #endif
 
 #ifdef USE_OUTPUT
-PbHubPWMOutput::PbHubPWMOutput(PbHubComponent *parent, uint8_t pin)
-    : parent_(parent), endpoint_valid_(protocol::decode_endpoint(pin, this->endpoint_)) {}
+PbHubPWMOutput::PbHubPWMOutput(PbHubComponent *parent, uint8_t channel, uint8_t signal_index)
+    : parent_(parent), endpoint_{channel, signal_index}, endpoint_valid_(protocol::is_valid(this->endpoint_)) {}
 
 void PbHubPWMOutput::setup() {
   if (!this->desired_known_)
@@ -494,10 +510,12 @@ void PbHubPWMOutput::setup() {
 
 void PbHubPWMOutput::dump_config() {
   ESP_LOGCONFIG(TAG, "PBHUB PWM Output:");
-  if (this->endpoint_valid_)
-    ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->endpoint_.channel * 10U + this->endpoint_.index);
-  else
-    ESP_LOGCONFIG(TAG, "  Endpoint: invalid");
+  if (this->endpoint_valid_) {
+    ESP_LOGCONFIG(TAG, "  Channel: %u", this->endpoint_.channel);
+    ESP_LOGCONFIG(TAG, "  Signal: %c", signal_name(this->endpoint_.index));
+  } else {
+    ESP_LOGCONFIG(TAG, "  Channel/signal: invalid");
+  }
   ESP_LOGCONFIG(TAG, "  PWM Frequency: nominal %.2f Hz (fixed by firmware)", protocol::NOMINAL_PWM_FREQUENCY_HZ);
   LOG_FLOAT_OUTPUT(this);
 }
@@ -543,8 +561,8 @@ bool PbHubPWMOutput::apply_desired_state_() {
   return true;
 }
 
-PbHubServoOutput::PbHubServoOutput(PbHubComponent *parent, uint8_t pin)
-    : parent_(parent), endpoint_valid_(protocol::decode_endpoint(pin, this->endpoint_)) {}
+PbHubServoOutput::PbHubServoOutput(PbHubComponent *parent, uint8_t channel, uint8_t signal_index)
+    : parent_(parent), endpoint_{channel, signal_index}, endpoint_valid_(protocol::is_valid(this->endpoint_)) {}
 
 void PbHubServoOutput::setup() {
   if (!this->desired_known_)
@@ -553,10 +571,12 @@ void PbHubServoOutput::setup() {
 
 void PbHubServoOutput::dump_config() {
   ESP_LOGCONFIG(TAG, "PBHUB Servo Output:");
-  if (this->endpoint_valid_)
-    ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->endpoint_.channel * 10U + this->endpoint_.index);
-  else
-    ESP_LOGCONFIG(TAG, "  Endpoint: invalid");
+  if (this->endpoint_valid_) {
+    ESP_LOGCONFIG(TAG, "  Channel: %u", this->endpoint_.channel);
+    ESP_LOGCONFIG(TAG, "  Signal: %c", signal_name(this->endpoint_.index));
+  } else {
+    ESP_LOGCONFIG(TAG, "  Channel/signal: invalid");
+  }
   ESP_LOGCONFIG(TAG, "  Frame Frequency: nominal %.2f Hz (fixed by firmware)",
                 protocol::NOMINAL_SERVO_FREQUENCY_HZ);
   ESP_LOGCONFIG(TAG, "  Pulse Range: %u..%u us; zero detaches", protocol::SERVO_MIN_PULSE_US,
@@ -647,8 +667,8 @@ bool PbHubServoOutput::apply_desired_state_() {
 #endif
 
 #ifdef USE_SENSOR
-PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval)
-    : PollingComponent(update_interval), parent_(parent), slot_(slot) {}
+PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t channel, uint32_t update_interval)
+    : PollingComponent(update_interval), parent_(parent), channel_(channel) {}
 
 void PbHubADC::update() {
   if (this->parent_ != nullptr)
@@ -659,18 +679,22 @@ void PbHubADC::perform_poll() {
   if (this->parent_ == nullptr)
     return;
   uint16_t value;
-  if (this->parent_->read_adc(this->slot_, value))
+  if (this->parent_->read_adc(this->channel_, value))
     this->publish_state(value);
 }
 
 void PbHubADC::dump_config() {
   LOG_SENSOR("", "PBHUB ADC", this);
-  ESP_LOGCONFIG(TAG, "  Slot: %u (signal A)", this->slot_);
+  ESP_LOGCONFIG(TAG, "  Channel: %u", this->channel_);
+  ESP_LOGCONFIG(TAG, "  Signal: A (fixed by firmware)");
   LOG_UPDATE_INTERVAL(this);
 }
 #endif
 
 #ifdef USE_SWITCH
+PbHubSwitch::PbHubSwitch(PbHubComponent *parent, uint8_t channel, uint8_t signal_index)
+    : parent_(parent), endpoint_{channel, signal_index}, endpoint_valid_(protocol::is_valid(this->endpoint_)) {}
+
 void PbHubSwitch::setup() {
   const auto initial_state = this->get_initial_state_with_restore_mode();
   if (!initial_state.has_value())
@@ -683,7 +707,8 @@ void PbHubSwitch::setup() {
 
 void PbHubSwitch::dump_config() {
   LOG_SWITCH("", "PBHUB Switch", this);
-  ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->pin_);
+  ESP_LOGCONFIG(TAG, "  Channel: %u", this->endpoint_.channel);
+  ESP_LOGCONFIG(TAG, "  Signal: %c", signal_name(this->endpoint_.index));
 }
 
 void PbHubSwitch::write_state(bool state) {
@@ -699,9 +724,8 @@ bool PbHubSwitch::apply_desired_state_(bool publish_immediately) {
   if (this->applied_known_ && this->applied_raw_ == this->desired_raw_)
     return true;
 
-  protocol::Endpoint endpoint{};
-  if (this->parent_ == nullptr || !protocol::decode_endpoint(this->pin_, endpoint) ||
-      !this->parent_->write_digital(endpoint, this->desired_raw_))
+  if (this->parent_ == nullptr || !this->endpoint_valid_ ||
+      !this->parent_->write_digital(this->endpoint_, this->desired_raw_))
     return false;
 
   this->applied_raw_ = this->desired_raw_;
@@ -784,8 +808,8 @@ bool PbHubRGBLight::flush_pending_rgb_write() {
 bool PbHubRGBLight::restore_configuration() {
   if (this->configuration_applied_)
     return true;
-  if (!this->parent_->configure_leds(this->slot_, this->led_count_) ||
-      !this->parent_->set_led_full_brightness(this->slot_))
+  if (!this->parent_->configure_leds(this->channel_, this->led_count_) ||
+      !this->parent_->set_led_full_brightness(this->channel_))
     return false;
   this->configuration_applied_ = true;
   return true;
@@ -805,7 +829,7 @@ bool PbHubRGBLight::apply_desired_state_() {
     return true;
   }
   if (this->parent_ == nullptr ||
-      !this->parent_->fill_leds(this->slot_, this->led_count_, 0, this->led_count_, this->desired_color_.red,
+      !this->parent_->fill_leds(this->channel_, this->led_count_, 0, this->led_count_, this->desired_color_.red,
                                 this->desired_color_.green, this->desired_color_.blue))
     return false;
   this->applied_color_ = this->desired_color_;

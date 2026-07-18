@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-invalid-slot-negative
+  name: pbhub-bad-adc-channel-low
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -12,4 +12,4 @@ sensor:
   - platform: pbhub
     id: invalid_adc
     pbhub_id: test_hub
-    slot: -1
+    channel: -1

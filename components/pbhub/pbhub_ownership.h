@@ -32,6 +32,17 @@ constexpr bool is_valid_endpoint_owner(EndpointOwner owner) {
   return false;
 }
 
+constexpr bool can_own_endpoint(protocol::Endpoint endpoint, EndpointOwner owner) {
+  if (!protocol::is_valid(endpoint) || !is_valid_endpoint_owner(owner))
+    return false;
+
+  if (owner == EndpointOwner::ADC)
+    return endpoint.index == protocol::SIGNAL_A_INDEX;
+  if (owner == EndpointOwner::RGB)
+    return endpoint.index == protocol::SIGNAL_B_INDEX;
+  return true;
+}
+
 struct EndpointClaim {
   EndpointOwner owner{EndpointOwner::NONE};
   const char *owner_id{nullptr};
@@ -41,7 +52,7 @@ class EndpointClaimRegistry {
  public:
   bool claim(protocol::Endpoint endpoint, EndpointOwner owner, const char *owner_id) {
     uint8_t ordinal;
-    if (!protocol::endpoint_ordinal(endpoint, ordinal) || !is_valid_endpoint_owner(owner) || owner_id == nullptr) {
+    if (!can_own_endpoint(endpoint, owner) || !protocol::endpoint_ordinal(endpoint, ordinal) || owner_id == nullptr) {
       this->conflict_ = true;
       return false;
     }
@@ -57,7 +68,7 @@ class EndpointClaimRegistry {
   }
 
   bool owns(protocol::Endpoint endpoint, EndpointOwner owner) const {
-    if (!is_valid_endpoint_owner(owner))
+    if (!can_own_endpoint(endpoint, owner))
       return false;
     const auto *claim = this->find(endpoint);
     return claim != nullptr && claim->owner == owner;

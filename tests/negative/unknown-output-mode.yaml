@@ -12,5 +12,6 @@ output:
   - platform: pbhub
     id: invalid_output
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
     mode: variable

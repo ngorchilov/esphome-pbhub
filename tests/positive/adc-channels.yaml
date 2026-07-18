@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-phase1-adc
+  name: pbhub-adc-channels
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -10,27 +10,27 @@ pbhub:
 
 sensor:
   - platform: pbhub
-    id: adc_slot_0
+    id: adc_channel_0
     pbhub_id: test_hub
-    slot: 0
+    channel: 0
     update_interval: 250ms
   - platform: pbhub
-    id: adc_slot_1
+    id: adc_channel_1
     pbhub_id: test_hub
-    slot: 1
+    channel: 1
   - platform: pbhub
-    id: adc_slot_2
+    id: adc_channel_2
     pbhub_id: test_hub
-    slot: 2
+    channel: 2
   - platform: pbhub
-    id: adc_slot_3
+    id: adc_channel_3
     pbhub_id: test_hub
-    slot: 3
+    channel: 3
   - platform: pbhub
-    id: adc_slot_4
+    id: adc_channel_4
     pbhub_id: test_hub
-    slot: 4
+    channel: 4
   - platform: pbhub
-    id: adc_slot_5
+    id: adc_channel_5
     pbhub_id: test_hub
-    slot: 5
+    channel: 5

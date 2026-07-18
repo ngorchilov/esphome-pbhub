@@ -12,10 +12,12 @@ output:
   - platform: pbhub
     id: first_pwm
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: a
     mode: pwm
   - platform: pbhub
     id: second_pwm
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: a
     mode: pwm

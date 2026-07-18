@@ -12,8 +12,10 @@ switch:
   - platform: pbhub
     id: first_switch
     pbhub_id: test_hub
-    pin: 1
+    channel: 0
+    signal: b
   - platform: pbhub
     id: second_switch
     pbhub_id: test_hub
-    pin: 1
+    channel: 0
+    signal: b

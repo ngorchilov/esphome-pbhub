@@ -10,71 +10,83 @@ pbhub:
 
 binary_sensor:
   - platform: pbhub
-    id: input_0
+    id: input_0a
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
     update_interval: 50ms
   - platform: pbhub
-    id: input_10
+    id: input_1b
     pbhub_id: test_hub
-    pin: 10
+    channel: 1
+    signal: b
     update_interval: 100ms
     inverted: true
   - platform: pbhub
-    id: input_20
+    id: input_2a
     pbhub_id: test_hub
-    pin: 20
+    channel: 2
+    signal: a
     update_interval: 150ms
     filters:
       - delayed_off: 25ms
   - platform: pbhub
-    id: input_30
+    id: input_3b
     pbhub_id: test_hub
-    pin: 30
+    channel: 3
+    signal: b
     update_interval: 200ms
     inverted: true
   - platform: pbhub
-    id: input_40
+    id: input_4a
     pbhub_id: test_hub
-    pin: 40
+    channel: 4
+    signal: a
     update_interval: 250ms
   - platform: pbhub
-    id: input_50
+    id: input_5b
     pbhub_id: test_hub
-    pin: 50
+    channel: 5
+    signal: b
     update_interval: 300ms
     inverted: true
 
 switch:
   - platform: pbhub
-    id: switch_1
+    id: switch_0b
     pbhub_id: test_hub
-    pin: 1
+    channel: 0
+    signal: b
   - platform: pbhub
-    id: switch_11
+    id: switch_1a
     pbhub_id: test_hub
-    pin: 11
+    channel: 1
+    signal: a
     inverted: true
     restore_mode: ALWAYS_OFF
   - platform: pbhub
-    id: switch_21
+    id: switch_2b
     pbhub_id: test_hub
-    pin: 21
+    channel: 2
+    signal: b
     restore_mode: RESTORE_DEFAULT_OFF
   - platform: pbhub
-    id: switch_31
+    id: switch_3a
     pbhub_id: test_hub
-    pin: 31
+    channel: 3
+    signal: a
     inverted: true
     restore_mode: ALWAYS_OFF
   - platform: pbhub
-    id: switch_41
+    id: switch_4b
     pbhub_id: test_hub
-    pin: 41
+    channel: 4
+    signal: b
     restore_mode: ALWAYS_OFF
   - platform: pbhub
-    id: switch_51
+    id: switch_5a
     pbhub_id: test_hub
-    pin: 51
+    channel: 5
+    signal: a
     inverted: true
     restore_mode: DISABLED

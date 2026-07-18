@@ -13,13 +13,13 @@ light:
     id: rgb_one_led
     output_id: rgb_always_off_output
     pbhub_id: test_hub
-    slot: 0
+    channel: 0
     num_leds: 1
   - platform: pbhub
     id: rgb_max_leds
     output_id: rgb_restore_default_output
     pbhub_id: test_hub
-    slot: 5
+    channel: 5
     num_leds: 74
     restore_mode: RESTORE_DEFAULT_OFF
     default_transition_length: 250ms
@@ -33,13 +33,13 @@ light:
     id: rgb_intermediate_leds
     output_id: rgb_restore_and_off_output
     pbhub_id: test_hub
-    slot: 3
+    channel: 3
     num_leds: 12
     restore_mode: RESTORE_AND_OFF
   - platform: pbhub
     id: rgb_always_on
     output_id: rgb_always_on_output
     pbhub_id: test_hub
-    slot: 4
+    channel: 4
     num_leds: 6
     restore_mode: ALWAYS_ON

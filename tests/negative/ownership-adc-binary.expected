@@ -1,1 +1,1 @@
-PBHUB endpoint 20 on hub 'test_hub' is claimed by both ADC sensor 'adc_conflict' at sensor[0] and digital input 'input_conflict' at binary_sensor[0]
+PBHUB channel 2 signal A on hub 'test_hub' is claimed by both ADC sensor 'adc_conflict' at sensor[0] and digital input 'input_conflict' at binary_sensor[0]

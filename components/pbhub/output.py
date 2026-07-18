@@ -2,22 +2,24 @@ import esphome.codegen as cg
 from esphome.components import output
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_CHANNEL,
     CONF_ID,
     CONF_INVERTED,
     CONF_MAX_POWER,
     CONF_MIN_POWER,
     CONF_MODE,
-    CONF_PIN,
 )
 
 from . import (
     CONF_PBHUB_ID,
+    CONF_SIGNAL,
     EndpointOwner,
     OUTPUT_MODE_PWM,
     OUTPUT_MODE_SERVO,
     PbHubComponent,
     pbhub_ns,
-    validate_endpoint,
+    validate_channel,
+    validate_signal,
 )
 
 CODEOWNERS = ["@ngorchilov"]
@@ -76,7 +78,8 @@ def _validate_servo_transforms(config):
 
 _COMMON_SCHEMA = {
     cv.Required(CONF_PBHUB_ID): cv.use_id(PbHubComponent),
-    cv.Required(CONF_PIN): validate_endpoint,
+    cv.Required(CONF_CHANNEL): validate_channel,
+    cv.Required(CONF_SIGNAL): validate_signal,
 }
 
 CONFIG_SCHEMA = cv.All(
@@ -104,14 +107,17 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     parent = await cg.get_variable(config[CONF_PBHUB_ID])
-    var = cg.new_Pvariable(config[CONF_ID], parent, config[CONF_PIN])
+    signal = config[CONF_SIGNAL]
+    var = cg.new_Pvariable(config[CONF_ID], parent, config[CONF_CHANNEL], signal)
     owner = (
         EndpointOwner.SERVO
         if config[CONF_MODE] == OUTPUT_MODE_SERVO
         else EndpointOwner.PWM
     )
     cg.add(
-        parent.claim_endpoint(config[CONF_PIN], owner, str(config[CONF_ID]))
+        parent.claim_endpoint(
+            config[CONF_CHANNEL], signal, owner, str(config[CONF_ID])
+        )
     )
     cg.add(parent.register_recovery_client(var))
     await output.register_output(var, config)

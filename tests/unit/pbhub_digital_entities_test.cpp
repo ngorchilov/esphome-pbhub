@@ -116,14 +116,14 @@ static void ready_hub(PbHubComponent &hub, ScriptedI2CBus &bus) {
 static void test_serialized_polling_and_inversion() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubBinarySensor normal(&hub, 0);
-  PbHubBinarySensor inverted(&hub, 1);
+  PbHubBinarySensor normal(&hub, 0, 0);
+  PbHubBinarySensor inverted(&hub, 0, 1);
   PbHubADC adc(&hub, 1);
   inverted.set_inverted(true);
 
-  CHECK(hub.claim_endpoint(0, EndpointOwner::DIGITAL_INPUT, "normal_input"));
-  CHECK(hub.claim_endpoint(1, EndpointOwner::DIGITAL_INPUT, "inverted_input"));
-  CHECK(hub.claim_endpoint(10, EndpointOwner::ADC, "adc"));
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::DIGITAL_INPUT, "normal_input"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::DIGITAL_INPUT, "inverted_input"));
+  CHECK(hub.claim_endpoint(1, 0, EndpointOwner::ADC, "adc"));
   ready_hub(hub, bus);
 
   CHECK(normal.get_update_interval() == 100);
@@ -183,9 +183,9 @@ static void test_serialized_polling_and_inversion() {
 static void test_initial_inverted_failure_stays_unknown() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubBinarySensor inverted(&hub, 1);
+  PbHubBinarySensor inverted(&hub, 0, 1);
   inverted.set_inverted(true);
-  CHECK(hub.claim_endpoint(1, EndpointOwner::DIGITAL_INPUT, "inverted_input"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::DIGITAL_INPUT, "inverted_input"));
   ready_hub(hub, bus);
 
   inverted.update();
@@ -200,8 +200,8 @@ static void test_initial_inverted_failure_stays_unknown() {
 static void test_invalid_digital_response_preserves_unknown_and_last_state() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubBinarySensor input(&hub, 0);
-  CHECK(hub.claim_endpoint(0, EndpointOwner::DIGITAL_INPUT, "input"));
+  PbHubBinarySensor input(&hub, 0, 0);
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::DIGITAL_INPUT, "input"));
   ready_hub(hub, bus);
 
   input.update();
@@ -235,16 +235,16 @@ static void test_invalid_digital_response_preserves_unknown_and_last_state() {
 static void test_switch_restore_inversion_failure_and_replay() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubSwitch normal(&hub, 20);
-  PbHubSwitch inverted(&hub, 21);
+  PbHubSwitch normal(&hub, 2, 0);
+  PbHubSwitch inverted(&hub, 2, 1);
   inverted.set_inverted(true);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   CHECK(normal.get_setup_priority() > hub.get_setup_priority());
   CHECK(inverted.get_setup_priority() > hub.get_setup_priority());
-  CHECK(hub.claim_endpoint(20, EndpointOwner::DIGITAL_OUTPUT, "normal_switch"));
-  CHECK(hub.claim_endpoint(21, EndpointOwner::DIGITAL_OUTPUT, "inverted_switch"));
+  CHECK(hub.claim_endpoint(2, 0, EndpointOwner::DIGITAL_OUTPUT, "normal_switch"));
+  CHECK(hub.claim_endpoint(2, 1, EndpointOwner::DIGITAL_OUTPUT, "inverted_switch"));
   CHECK(hub.register_recovery_client(&normal));
   CHECK(hub.register_recovery_client(&inverted));
 
@@ -307,12 +307,12 @@ static void test_switch_restore_inversion_failure_and_replay() {
 static void test_disabled_switch_stays_unknown() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubSwitch disabled(&hub, 30);
+  PbHubSwitch disabled(&hub, 3, 0);
   disabled.set_restore_mode(switch_::SWITCH_RESTORE_DISABLED);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(30, EndpointOwner::DIGITAL_OUTPUT, "disabled_switch"));
+  CHECK(hub.claim_endpoint(3, 0, EndpointOwner::DIGITAL_OUTPUT, "disabled_switch"));
   CHECK(hub.register_recovery_client(&disabled));
   disabled.setup();
   CHECK(!disabled.has_state());
@@ -328,10 +328,10 @@ static void test_disabled_switch_stays_unknown() {
 static void test_persisted_and_inverted_restore_modes() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubSwitch restored_on(&hub, 0);
-  PbHubSwitch inverted_restored_on(&hub, 1);
-  PbHubSwitch restored_inverted_off(&hub, 10);
-  PbHubSwitch inverted_restored_inverted_off(&hub, 11);
+  PbHubSwitch restored_on(&hub, 0, 0);
+  PbHubSwitch inverted_restored_on(&hub, 0, 1);
+  PbHubSwitch restored_inverted_off(&hub, 1, 0);
+  PbHubSwitch inverted_restored_inverted_off(&hub, 1, 1);
 
   restored_on.set_restore_mode(switch_::SWITCH_RESTORE_DEFAULT_OFF);
   restored_on.test_set_restored_state(true);
@@ -346,10 +346,10 @@ static void test_persisted_and_inverted_restore_modes() {
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(0, EndpointOwner::DIGITAL_OUTPUT, "restored_on"));
-  CHECK(hub.claim_endpoint(1, EndpointOwner::DIGITAL_OUTPUT, "inverted_restored_on"));
-  CHECK(hub.claim_endpoint(10, EndpointOwner::DIGITAL_OUTPUT, "restored_inverted_off"));
-  CHECK(hub.claim_endpoint(11, EndpointOwner::DIGITAL_OUTPUT, "inverted_restored_inverted_off"));
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::DIGITAL_OUTPUT, "restored_on"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::DIGITAL_OUTPUT, "inverted_restored_on"));
+  CHECK(hub.claim_endpoint(1, 0, EndpointOwner::DIGITAL_OUTPUT, "restored_inverted_off"));
+  CHECK(hub.claim_endpoint(1, 1, EndpointOwner::DIGITAL_OUTPUT, "inverted_restored_inverted_off"));
   CHECK(hub.register_recovery_client(&restored_on));
   CHECK(hub.register_recovery_client(&inverted_restored_on));
   CHECK(hub.register_recovery_client(&restored_inverted_off));
@@ -378,12 +378,12 @@ static void test_persisted_and_inverted_restore_modes() {
 static void test_failed_switch_request_replays_without_intervening_command() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubSwitch output(&hub, 20);
+  PbHubSwitch output(&hub, 2, 0);
   output.set_restore_mode(switch_::SWITCH_RESTORE_DISABLED);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(20, EndpointOwner::DIGITAL_OUTPUT, "output"));
+  CHECK(hub.claim_endpoint(2, 0, EndpointOwner::DIGITAL_OUTPUT, "output"));
   CHECK(hub.register_recovery_client(&output));
   output.setup();
 
@@ -409,12 +409,12 @@ static void test_failed_switch_request_replays_without_intervening_command() {
 static void test_partial_recovery_does_not_publish_switch() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubSwitch output(&hub, 30);
+  PbHubSwitch output(&hub, 3, 0);
   ControlledRecoveryClient later_client;
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(30, EndpointOwner::DIGITAL_OUTPUT, "output"));
+  CHECK(hub.claim_endpoint(3, 0, EndpointOwner::DIGITAL_OUTPUT, "output"));
   CHECK(hub.register_recovery_client(&output));
   CHECK(hub.register_recovery_client(&later_client));
   output.setup();

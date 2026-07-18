@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-invalid-endpoint-19
+  name: pbhub-legacy-slot-field
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -8,9 +8,8 @@ pbhub:
   id: test_hub
   i2c_id: test_i2c
 
-output:
+sensor:
   - platform: pbhub
-    id: invalid_output
+    id: legacy_adc
     pbhub_id: test_hub
-    pin: 19
-    mode: pwm
+    slot: 0

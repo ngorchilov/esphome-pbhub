@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-forbidden-adc-signal
+
+packages:
+  common: !include ../common/esp32-idf.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+sensor:
+  - platform: pbhub
+    id: invalid_adc
+    pbhub_id: test_hub
+    channel: 0
+    signal: a

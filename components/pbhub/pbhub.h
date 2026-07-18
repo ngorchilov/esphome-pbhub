@@ -33,7 +33,7 @@ namespace esphome::pbhub {
 class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRecoveryBackend {
  public:
   static constexpr float SETUP_PRIORITY = setup_priority::IO;
-  // Provisional host-side traffic policy. Phase 9 hardware measurements must
+  // Provisional host-side traffic policy. Real-hardware measurements must
   // validate or revise it; the firmware does not define a safe refresh rate.
   static constexpr uint32_t RGB_MIN_REFRESH_INTERVAL_US = 50'000;
 
@@ -51,12 +51,12 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   bool register_recovery_client(PbHubRecoveryClient *client);
   bool queue_poll(PbHubPollClient *client);
   bool queue_rgb_write(PbHubRGBWriteClient *client);
-  bool claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owner, const char *owner_id);
+  bool claim_endpoint(uint8_t channel, uint8_t signal_index, EndpointOwner owner, const char *owner_id);
   void set_led_timing_mode(uint8_t mode);
 
   bool read_digital(protocol::Endpoint endpoint, bool &value);
   bool write_digital(protocol::Endpoint endpoint, bool value);
-  bool read_adc(uint8_t slot, uint16_t &value);
+  bool read_adc(uint8_t channel, uint16_t &value);
   bool write_pwm(protocol::Endpoint endpoint, uint8_t duty);
   bool write_servo_pulse(protocol::Endpoint endpoint, uint16_t pulse_us);
   bool write_servo_detach(protocol::Endpoint endpoint);
@@ -113,7 +113,8 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
 #ifdef USE_BINARY_SENSOR
 class PbHubBinarySensor : public binary_sensor::BinarySensor, public PollingComponent, public PbHubPollClient {
  public:
-  PbHubBinarySensor(PbHubComponent *parent, uint8_t pin, uint32_t update_interval = 100);
+  PbHubBinarySensor(PbHubComponent *parent, uint8_t channel, uint8_t signal_index,
+                    uint32_t update_interval = 100);
 
   void update() override;
   void perform_poll() override;
@@ -131,7 +132,7 @@ class PbHubBinarySensor : public binary_sensor::BinarySensor, public PollingComp
 #ifdef USE_OUTPUT
 class PbHubPWMOutput final : public output::FloatOutput, public Component, public PbHubRecoveryClient {
  public:
-  PbHubPWMOutput(PbHubComponent *parent, uint8_t pin);
+  PbHubPWMOutput(PbHubComponent *parent, uint8_t channel, uint8_t signal_index);
 
   void setup() override;
   void dump_config() override;
@@ -161,7 +162,7 @@ class PbHubPWMOutput final : public output::FloatOutput, public Component, publi
 
 class PbHubServoOutput final : public output::FloatOutput, public Component, public PbHubRecoveryClient {
  public:
-  PbHubServoOutput(PbHubComponent *parent, uint8_t pin);
+  PbHubServoOutput(PbHubComponent *parent, uint8_t channel, uint8_t signal_index);
 
   void setup() override;
   void dump_config() override;
@@ -193,7 +194,7 @@ class PbHubServoOutput final : public output::FloatOutput, public Component, pub
 #ifdef USE_SENSOR
 class PbHubADC : public sensor::Sensor, public PollingComponent, public PbHubPollClient {
  public:
-  PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval = 1000);
+  PbHubADC(PbHubComponent *parent, uint8_t channel, uint32_t update_interval = 1000);
 
   void update() override;
   void perform_poll() override;
@@ -201,14 +202,14 @@ class PbHubADC : public sensor::Sensor, public PollingComponent, public PbHubPol
 
  protected:
   PbHubComponent *parent_;
-  uint8_t slot_;
+  uint8_t channel_;
 };
 #endif
 
 #ifdef USE_SWITCH
 class PbHubSwitch final : public switch_::Switch, public Component, public PbHubRecoveryClient {
  public:
-  PbHubSwitch(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+  PbHubSwitch(PbHubComponent *parent, uint8_t channel, uint8_t signal_index);
 
   void setup() override;
   void dump_config() override;
@@ -227,7 +228,8 @@ class PbHubSwitch final : public switch_::Switch, public Component, public PbHub
   bool apply_desired_state_(bool publish_immediately);
 
   PbHubComponent *parent_;
-  uint8_t pin_;
+  protocol::Endpoint endpoint_{};
+  bool endpoint_valid_{false};
   bool desired_raw_{false};
   bool applied_raw_{false};
   bool pending_raw_{false};
@@ -240,7 +242,7 @@ class PbHubSwitch final : public switch_::Switch, public Component, public PbHub
 #ifdef USE_LIGHT
 class PbHubRGBLight : public light::LightOutput, public PbHubRecoveryClient, public PbHubRGBWriteClient {
  public:
-  PbHubRGBLight(PbHubComponent *parent, uint8_t slot) : parent_(parent), slot_(slot) {}
+  PbHubRGBLight(PbHubComponent *parent, uint8_t channel) : parent_(parent), channel_(channel) {}
 
   light::LightTraits get_traits() override;
   void update_state(light::LightState *state) override;
@@ -270,7 +272,7 @@ class PbHubRGBLight : public light::LightOutput, public PbHubRecoveryClient, pub
   bool apply_desired_state_();
 
   PbHubComponent *parent_;
-  uint8_t slot_;
+  uint8_t channel_;
   uint16_t led_count_{1};
   protocol::Rgb desired_color_{};
   protocol::Rgb applied_color_{};

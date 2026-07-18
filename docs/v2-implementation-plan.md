@@ -5,25 +5,25 @@ split into reviewable phases. The protocol and safety decisions come from
 [the firmware datasheet](pbhub-firmware-protocol.md), which remains the source of
 truth when implementation details are debated later.
 
-Phase 0 changed documentation only. The later phases implement this plan in
-reviewable commits, with their acceptance criteria serving as the completion
-boundary for each commit.
+Phase 0 changed documentation only. Phases 1 through 9 implemented and validated
+the host component in reviewable commits. Phase 10 remains the real-hardware and
+release boundary.
 
 ## Goals
 
 1. Implement the real STM32 protocol instead of treating the PBHUB like an
    ordinary local GPIO expander.
 2. Represent transport failure separately from valid `false` and zero readings.
-3. Prevent invalid endpoint mapping and conflicting ownership of physical pins.
+3. Prevent invalid channel/signal mapping and conflicting ownership of physical
+   signals.
 4. Expose digital input/output, ADC, fixed-frequency PWM, servo and uniform RGB
    light through native ESPHome entities.
 5. Keep the component efficient enough that I2C traffic does not unnecessarily
    worsen the firmware's PWM and servo jitter.
 6. Target the audited stock PBHUB application protocol reporting firmware
    version 2.
-7. Target the public APIs of ESPHome 2026.7.0 on classic ESP32, with ESP-IDF as
-   the primary configuration/code-generation/build target and planned Phase 9
-   runtime framework, and Arduino as a compile-only compatibility target.
+7. Validate against the public APIs of ESPHome 2026.7.0 on ESP32 with both
+   ESP-IDF and Arduino. The component does not enforce an ESPHome version.
 8. Publish only portable product and implementation documentation. Exclude
    machine-local paths, deployment identifiers and workflow history.
 
@@ -38,32 +38,33 @@ boundary for each commit.
 - Pretending the RGB protocol is an efficient addressable-light transport.
 - Adding tracked dotfiles or repository-hosted CI while the project's deliberate
   `.*` exclusion remains in place.
-- Supporting ESPHome releases other than 2026.7.0.
+- Claiming support for ESPHome releases that have not completed the validation
+  matrix.
 
 ## Design decisions
 
 | Area | v2 decision | Reason |
 |---|---|---|
-| Endpoint model | Exact channel/index type; valid external numbers are only `0,1,10,11,...,50,51` | The register banks are non-contiguous and the prototype fell back to channel 0 for invalid values |
+| Channel/signal model | YAML names `channel: 0..5` directly; digital input/switch/PWM/servo additionally require `signal: a\|b`; C++ retains an exact channel/index type | The public API follows the physical connector labels and never exposes register-derived endpoint encoding |
 | Digital input | Native polling `binary_sensor` | A boolean GPIOPin API cannot report I2C failure and generic GPIO polling is excessively frequent |
 | Digital output | Native `switch` only | The clean v2 API does not retain the old GPIOPin abstraction |
-| ADC | Native raw sensor configured by `slot: 0..5` | ADC exists only on signal A, not on an arbitrary endpoint |
+| ADC | Native raw sensor configured by `channel: 0..5`; signal A is fixed and no `signal` option exists | Firmware implements ADC only on signal A |
 | PWM | `output` mode with fixed frequency near 392 Hz; use digital low/high for encoded duties 0/255 | Firmware version 2 has no frequency control, and its PWM extrema have edge-state defects |
 | Servo | Separate `output` mode using the direct pulse register | Application firmware version 2 has a separate, source-derived nominal 50 Hz servo generator; ordinary PWM is not equivalent |
-| RGB | One uniform RGB light per configured channel/strip | Every indexed command immediately transmits a strip prefix, making addressable effects inefficient |
+| RGB | One uniform RGB light configured by `channel: 0..5`; signal B is fixed and no `signal` option exists | Firmware implements RGB only on signal B, and every indexed command immediately transmits a strip prefix |
 | RGB brightness | Scale on the ESP host; keep STM32 brightness at 255 | Firmware brightness is nonlinear and applies one color write late |
-| Endpoint conflicts | Reject duplicate ownership | Firmware commands silently replace the current mode of a physical signal |
+| Channel/signal conflicts | Reject duplicate ownership | Firmware commands silently replace the current mode of a physical signal |
 | Dangerous globals | Excluded | Address mutation wears flash, and reset/IAP is outside the ESPHome component's scope |
-| Firmware target | Audited stock protocol reporting application version exactly 2 | The version register is a compatibility guard, not authentication of the exact factory binary |
+| Firmware target | Audited stock protocol reporting application version 2 | The version register is a compatibility guard, not authentication of the factory binary |
 | Transport API | ESPHome 2026.7.0 `read_register`/`write_register`, returning `i2c::ErrorCode` | These current APIs directly match the PBHUB register transaction model |
-| ESPHome target | Exactly 2026.7.0 | No cross-version shims or historical API branches are required |
+| ESPHome target | Validate against 2026.7.0 | No runtime version gate; other releases remain unclaimed until tested |
 | Reported output state | Switch publishes after successful transport; light reports ESPHome desired state | ESPHome light state is published before `LightOutput::write_state()`, and firmware has no physical feedback |
 | Recovery | Invalidate verification and applied-state caches after transport loss; rate-limit re-probe and replay | Only the I2C address persists across a hub reset |
 
 ## Historical prototype gap analysis
 
 The pre-v2 component was a useful prototype. The implementation phases below
-closed these gaps; they are retained here as design rationale.
+addressed these gaps. They are retained here as design rationale.
 
 ### 1. Endpoint validation accepted impossible pins
 
@@ -72,8 +73,10 @@ as 2, 9, 22 and 49 did not represent a physical PBHUB signal. C++ register
 helpers also mapped an invalid channel back to channel 0. A typo could therefore
 control the wrong output instead of failing configuration.
 
-v2 resolution: one shared validator accepts only the twelve exact endpoint
-values, and no C++ helper has a channel-0 fallback.
+v2 resolution: the public API accepts `channel: 0..5` and, where both signal
+lines are selectable, requires lowercase `signal: a` or `signal: b`. It never
+accepts an encoded endpoint value. Internal C++ helpers operate on a validated
+channel/index pair and never fall back to channel 0.
 
 ### 2. ADC configuration and C++ interpretation disagreed
 
@@ -81,8 +84,8 @@ The sensor schema accepted a pin-shaped number, while the C++ sensor passed that
 number as a channel. A value such as 32 was not channel 3; it became an invalid
 channel and fell back to channel 0.
 
-v2 resolution: ADC uses `slot: 0..5`. Signal A is implicit because `B+0x6` is the
-only implemented ADC register.
+v2 resolution: ADC uses `channel: 0..5`. Signal A is implicit because `B+0x6` is
+the only implemented ADC register; ADC exposes no `signal` option.
 
 ### 3. RGB configuration was not implemented as advertised
 
@@ -92,8 +95,9 @@ programmed the count or used a range fill. Each update wrote only LED 0. It wrot
 color before brightness, while firmware brightness affected only subsequent
 color writes.
 
-v2 resolution: slot and count are validated, firmware brightness is fixed at
-255, color is host-scaled and one bounded fill covers all configured LEDs.
+v2 resolution: channel and count are validated, signal B is implicit and not
+configurable, firmware brightness is fixed at 255, color is host-scaled and one
+bounded fill covers all configured LEDs.
 
 ### 4. Communication failure was converted into valid state
 
@@ -148,15 +152,16 @@ v2 resolution: `mode: pwm` and `mode: servo` are explicit. Dynamic frequency
 requests do not fail silently. RTTTL remains unsupported on application firmware
 version 2.
 
-### 8. No endpoint ownership model existed
+### 8. No channel/signal ownership model existed
 
 An ADC sensor, GPIO, PWM output, servo and RGB light could all target the same
 physical signal. The firmware lets the most recent command silently change its
 mode, producing intermittent behavior that looks like a transport problem.
 
-v2 resolution: endpoints are claimed during validation/code generation and
-again in C++ as a defensive check. A conflict identifies both owners and fails
-loudly.
+v2 resolution: channel/signal pairs are claimed during validation/code
+generation and again in C++ as a defensive check. ADC always claims A and RGB
+always claims B of their configured channel. A conflict identifies both owners
+and fails loudly.
 
 ### 9. Feature guards and class layout were fragile
 
@@ -189,13 +194,14 @@ The README used an incorrect default address in examples, named platform values
 that did not match the Python module layout, and presented PWM as suitable for
 RTTTL and direct ESPHome servo use.
 
-v2 resolution: every public shape is traced to a fixture that passed the target
-ESPHome validation/compile matrix, and application-firmware-v2 limits are stated
-next to the relevant feature.
+v2 resolution: every public shape must be traced to a fixture that passes the
+fresh channel/signal API validation/compile matrix, and
+application-firmware-v2 limits are stated next to the relevant feature.
 
 ## v2 public YAML API
 
-The names and constraints below are the implemented v2 API.
+The names and constraints below are the implemented and validated v2 API. The old
+encoded `pin` and `slot` shapes are not aliases.
 
 ### Hub
 
@@ -227,11 +233,12 @@ strips that require incompatible timing modes cannot share one PBHUB.
 ```yaml
 binary_sensor:
   - platform: pbhub
+    name: Door
     pbhub_id: hub
-    pin: 31
+    channel: 3
+    signal: b
     update_interval: 100ms
     inverted: true
-    name: Door
 ```
 
 The sensor publishes only after a successful I2C read. On failure it retains the
@@ -242,11 +249,12 @@ last state and contributes to the parent's communication warning.
 ```yaml
 switch:
   - platform: pbhub
+    name: Relay
     pbhub_id: hub
-    pin: 41
+    channel: 4
+    signal: b
     inverted: false
     restore_mode: ALWAYS_OFF
-    name: Relay
 ```
 
 The default logical command must be off. Restoring any other state is explicit and occurs
@@ -258,12 +266,13 @@ successfully transported command, not physical output feedback.
 ```yaml
 sensor:
   - platform: pbhub
-    pbhub_id: hub
-    slot: 3
-    update_interval: 1s
     name: Analog Input
+    pbhub_id: hub
+    channel: 3
+    update_interval: 1s
 ```
 
+ADC is fixed to signal A by firmware and therefore exposes no `signal` option.
 The sensor publishes the raw integer range `0..4095` without pretending to know
 the connected sensor's voltage or engineering-unit conversion. Users can apply
 ESPHome filters.
@@ -275,7 +284,8 @@ output:
   - platform: pbhub
     id: hub_pwm
     pbhub_id: hub
-    pin: 11
+    channel: 1
+    signal: b
     mode: pwm
 ```
 
@@ -291,7 +301,8 @@ output:
   - platform: pbhub
     id: hub_servo_output
     pbhub_id: hub
-    pin: 11
+    channel: 1
+    signal: b
     mode: servo
 
 servo:
@@ -335,19 +346,20 @@ detach command.
 ```yaml
 light:
   - platform: pbhub
-    pbhub_id: hub
-    slot: 3
-    num_leds: 12
     name: Hub LEDs
+    pbhub_id: hub
+    channel: 3
+    num_leds: 12
 ```
 
+RGB is fixed to signal B by firmware and therefore exposes no `signal` option.
 This is one uniform RGB light spanning the configured LEDs. It is not an
 addressable light. Setup writes LED count and firmware brightness 255. Each
 update resolves on/off, brightness and RGB on the host, then stages one safe fill
 from index 0 across exactly `num_leds` entries. Intermediate states coalesce in a
 fair parent-owned queue. The hub sends at most one normal RGB fill per provisional
 50 ms interval across all six strips. That host traffic policy is not a claim of
-firmware or servo timing safety and remains subject to Phase 9 measurement.
+firmware or servo timing safety and remains subject to Phase 10 measurement.
 
 PBHUB lights default to `default_transition_length: 0s`; explicit uniform RGB
 effects and transitions remain available and are sampled through the same queue.
@@ -363,8 +375,8 @@ clear API take precedence over preserving prototype behavior.
    reporting firmware version `2` from register `0xFE`. This self-reported byte
    does not authenticate the exact factory image or modified firmware that keeps
    the same value.
-2. The only software target is ESPHome 2026.7.0. Use its public APIs directly;
-   do not add cross-version shims or version conditionals.
+2. ESPHome 2026.7.0 is the validation target, not an enforced runtime version.
+   Use its public APIs directly; do not add speculative cross-version shims.
 3. Require an explicit `mode` for every PBHUB output. Do not infer PWM or servo
    behavior from an old configuration shape.
 4. Do not accept, normalize or deprecate old PBHUB YAML shapes. There are no
@@ -372,9 +384,9 @@ clear API take precedence over preserving prototype behavior.
 5. Remove the custom GPIOPin adapter instead of retaining an output-only form.
    Digital input and output use the native PBHUB binary-sensor and switch
    platforms; PWM and servo use the new output platform.
-6. Invalid endpoint values, channel-0 fallback, pseudo-servo through PWM and
-   misleading RTTTL behavior fail or remain unsupported without compatibility
-   exceptions.
+6. Invalid channels or signals, old encoded `pin`/`slot` shapes, channel-0
+   fallback, pseudo-servo through PWM and misleading RTTTL behavior fail or
+   remain unsupported without compatibility exceptions.
 7. Treat every existing deployment as a downstream consumer, never as a design
    input. Only after the v2 API is frozen, adapt a representative deployment as
    an independent release smoke test without copying its names, identifiers,
@@ -388,9 +400,10 @@ clear API take precedence over preserving prototype behavior.
 
 Create one shared module-level implementation for:
 
-- `validate_slot`: integer `0..5`.
-- `validate_endpoint`: split with `divmod(value, 10)` and require channel `0..5`
-  plus index `0 or 1`.
+- `validate_channel`: integer `0..5`.
+- `validate_signal`: exact lowercase enum `a` or `b`, mapped internally to index
+  0 or 1. Require it only for digital input, switch, PWM and servo; ADC and RGB
+  must not accept a `signal` field.
 - `validate_led_count`: integer `1..74`.
 - required output mode: exact enum `pwm` or `servo`, with distinct generated C++
   output types rather than a runtime branch inside the PWM driver.
@@ -406,8 +419,9 @@ Create one shared module-level implementation for:
   `output.turn_on`.
 - LED timing mode: exact enum/integer 0 or 1.
 
-Error text should include the endpoint formula and accepted values. Platform
-schemas must import these validators instead of recreating loose ranges.
+Error text should name the valid channel range and accepted signal values.
+Platform schemas must import these validators instead of recreating ranges.
+No schema accepts or normalizes the replaced encoded `pin` or `slot` fields.
 
 ### Parent references
 
@@ -423,16 +437,16 @@ restore state must be loaded before the parent's initial recovery pass.
 
 Each entity declares a claim:
 
-| Entity | Claimed endpoint |
+| Entity | Claimed channel/signal pair |
 |---|---|
-| Digital input/switch/PWM/servo | Configured endpoint |
-| ADC sensor | `slot * 10 + 0` |
-| RGB light | `slot * 10 + 1` |
+| Digital input/switch/PWM/servo | Configured `channel` plus configured `signal` |
+| ADC sensor | Configured `channel`, signal A |
+| RGB light | Configured `channel`, signal B |
 
 Use ESPHome final validation to compare claims belonging to the same hub ID. The
-error must report the endpoint and both conflicting config paths. Add a matching
-C++ `claim_endpoint()` check so lambdas or future codegen mistakes cannot create
-a silent runtime conflict.
+error must report the channel, signal and both conflicting config paths. Add a
+matching C++ `claim_endpoint()` check so lambdas or future codegen mistakes
+cannot create a silent runtime conflict.
 
 Use the ESPHome 2026.7.0 final-validation API directly. Keep the matching C++
 guard as defense in depth, not as a fallback for another ESPHome release.
@@ -464,8 +478,8 @@ components/pbhub/
 
 - `pbhub_protocol.h`: scoped constants, `Endpoint`, register construction and
   endian helpers with no ESPHome entity dependency.
-- `pbhub_ownership.h`: host-testable endpoint ownership registry with no
-  ESPHome entity dependency.
+- `pbhub_ownership.h`: host-testable channel/signal ownership registry backed by
+  internal endpoints, with no ESPHome entity dependency.
 - `pbhub_polling.h`: fixed-capacity, coalescing FIFO for serialized scheduled
   input and ADC reads, with no ESPHome entity dependency.
 - `pbhub_recovery.h`: host-testable health state machine and recovery-client
@@ -473,7 +487,7 @@ components/pbhub/
 - `pbhub_rgb_queue.h`: six-client coalescing FIFO that fairly serializes normal
   RGB fills across one physical hub, with no ESPHome entity dependency.
 - `pbhub.h/.cpp`: I2C transport, device health, verified firmware-version state,
-  recovery replay, endpoint ownership and typed protocol operations.
+  recovery replay, channel/signal ownership and typed protocol operations.
 - `pbhub_entities.h/.cpp`: thin feature-guarded ESPHome entity wrappers.
 - Python files: schemas, ownership validation and code generation.
 
@@ -493,6 +507,10 @@ struct Endpoint {
 };
 ```
 
+Code generation maps public `signal: a` to index 0 and `signal: b` to index 1.
+ADC constructs `{channel, 0}` and RGB constructs `{channel, 1}` without exposing
+a configurable signal. No decimal endpoint encoding crosses the YAML boundary.
+
 Register construction must return success/failure or operate only on a validated
 `Endpoint`. It must never substitute channel 0.
 
@@ -501,13 +519,13 @@ Central typed operations should have signatures equivalent to:
 ```cpp
 bool read_digital(Endpoint endpoint, bool &value);
 bool write_digital(Endpoint endpoint, bool value);
-bool read_adc(uint8_t slot, uint16_t &value);
+bool read_adc(uint8_t channel, uint16_t &value);
 bool write_pwm(Endpoint endpoint, uint8_t duty);
 bool write_servo_pulse(Endpoint endpoint, uint16_t pulse_us);
 bool write_servo_detach(Endpoint endpoint);
-bool configure_leds(uint8_t slot, uint16_t count);
-bool set_led_full_brightness(uint8_t slot);
-bool fill_leds(uint8_t slot, uint16_t configured_count,
+bool configure_leds(uint8_t channel, uint16_t count);
+bool set_led_full_brightness(uint8_t channel);
+bool fill_leds(uint8_t channel, uint16_t configured_count,
                uint16_t start, uint16_t count,
                uint8_t red, uint8_t green, uint8_t blue);
 ```
@@ -643,15 +661,16 @@ Binary-sensor and ADC polling intervals enqueue read requests in a parent-owned,
 fixed-capacity FIFO. Duplicate requests from the same entity coalesce while
 pending, and the parent performs at most one scheduled read per loop pass. Queued
 requests remain pending while the hub is unverified or recovering and resume only
-in `READY`. The twelve-entry capacity is sufficient because endpoint ownership
-allows at most one polling entity on each of the twelve physical signals.
+in `READY`. The twelve-entry capacity is sufficient because channel/signal
+ownership allows at most one polling entity on each of the twelve physical
+signals.
 User-triggered switch, PWM and servo changes remain immediate while the parent is
 ready. RGB is intentionally scheduled: each light stores only its latest host-
 scaled triple, duplicate queue entries coalesce and a six-client parent FIFO
 preserves fairness. The parent permits at most one normal RGB fill every 50 ms
 across the whole hub while continuing scheduled input and ADC polls between due
 fills. The fixed interval is a provisional traffic cap, not a firmware-derived
-safe rate; Phase 9 hardware measurements must validate or revise it. Recovery
+safe rate; Phase 10 hardware measurements must validate or revise it. Recovery
 replay bypasses this cadence so the parent cannot enter `READY` before the latest
 desired state has actually been transported.
 
@@ -666,6 +685,7 @@ remains.
 
 ### Binary sensor
 
+- Require `channel: 0..5` and lowercase `signal: a|b`.
 - Default polling interval: 100 ms, configurable.
 - A polling deadline queues a request; only the parent performs the I2C read, at
   most one scheduled input/ADC transaction per loop pass.
@@ -679,6 +699,7 @@ remains.
 
 ### Switch
 
+- Require `channel: 0..5` and lowercase `signal: a|b`.
 - Default restore mode sends a logical-off command.
 - Setup resolves the restore policy before the parent performs its initial
   version probe, but records desired state without issuing unverified I2C.
@@ -697,7 +718,8 @@ remains.
 
 ### ADC sensor
 
-- Slot only, signal A implicit.
+- Require `channel: 0..5`. Signal A is fixed by firmware; do not expose or
+  accept a `signal` option.
 - Raw range `0..4095`, zero accuracy decimals, an empty unit, measurement state
   class and no invented device class or voltage conversion.
 - Default update interval: 1 s, configurable.
@@ -713,6 +735,7 @@ remains.
 
 ### PWM output
 
+- Require `channel: 0..5`, lowercase `signal: a|b` and `mode: pwm`.
 - Use ESPHome 2026.7.0's normal `FloatOutput` transforms for inversion,
   minimum/maximum power and `zero_means_zero`. Treat the resulting finite level
   as the final electrical duty, clamp it to `0.0..1.0` and round to `0..255`
@@ -737,6 +760,7 @@ remains.
 
 ### Servo output
 
+- Require `channel: 0..5`, lowercase `signal: a|b` and `mode: servo`.
 - Use a dedicated `PbHubServoOutput`, not a mode branch inside
   `PbHubPWMOutput`, and write the firmware's direct pulse register rather than
   angle or PWM duty.
@@ -769,7 +793,8 @@ remains.
 
 ### RGB light
 
-- Validate slot `0..5` and count `1..74`.
+- Validate channel `0..5` and count `1..74`. Signal B is fixed by firmware; do
+  not expose or accept a `signal` option.
 - During setup: optionally set the global timing mode once, set count, set
   firmware brightness 255, then send black when the deterministic restore policy
   requires off.
@@ -785,6 +810,10 @@ remains.
 - State clearly that all configured LEDs share one color.
 
 ## Implementation phases and acceptance criteria
+
+Phases 1 through 8 record the API and evidence at the time each phase completed.
+Their historical encoded `pin` and `slot` references are superseded by Phase 9
+and are not valid v2 configuration syntax.
 
 ### Phase 0 - Research and design
 
@@ -816,7 +845,7 @@ Changes:
 
 Acceptance:
 
-- Every valid endpoint passes.
+- Every valid encoded endpoint passes.
 - Invalid in-range-looking values such as 2, 19 and 49 fail with useful errors.
 - Invalid slots and counts, a missing or unknown output mode and premature
   `mode: servo` fail with useful errors.
@@ -842,7 +871,7 @@ Acceptance:
 - Unit-level register tests cover all six channel bases, every exposed typed
   operation, the firmware/global commands and the exact payload/response length
   of every transaction.
-- No invalid endpoint can produce an I2C register.
+- No invalid internal channel/index pair can produce an I2C register.
 - Simulated host-detected transport failure does not become a valid reading.
 - A simulated firmware-version response of 2 enables operation; any other
   successful version response is rejected without issuing feature commands.
@@ -993,8 +1022,8 @@ Acceptance:
 
 Changes:
 
-- Make classic ESP32 with ESP-IDF the canonical configuration, code-generation
-  and detailed compile target, and the planned Phase 9 runtime/hardware
+- Make ESP32 with ESP-IDF the canonical configuration, code-generation and
+  detailed compile target, and the planned Phase 10 runtime/hardware
   framework. Keep strict host C++ logic tests framework-neutral.
 - Keep the detailed positive, negative, generated-contract and firmware-compile
   suite on ESP-IDF so framework-dependent code paths are proved once instead of
@@ -1015,9 +1044,9 @@ Changes:
 Acceptance:
 
 - The framework-neutral host C++ tests pass, and the detailed positive/negative
-  schema, generated-contract and firmware-compile suite passes on classic ESP32
+  schema, generated-contract and firmware-compile suite passes on ESP32
   with ESP-IDF under ESPHome 2026.7.0.
-- The core-only and full-surface fixtures compile on classic ESP32 under both
+- The core-only and full-surface fixtures compile on ESP32 under both
   ESP-IDF and Arduino.
 - The full-surface fixture activates `USE_BINARY_SENSOR`, `USE_OUTPUT`,
   `USE_OUTPUT_FLOAT_POWER_SCALING`, `USE_SENSOR`, `USE_SWITCH` and `USE_LIGHT`,
@@ -1033,34 +1062,66 @@ Acceptance:
 
 Changes:
 
-- Rewrite README installation and all entity examples.
+- Rewrite README installation and all entity examples around direct `channel`
+  and `signal` selection rather than encoded endpoints.
 - Publish a concise clean-break notice and the complete new YAML reference.
 - Document the self-reported firmware-version guard, commanded-state semantics,
   undetectable between-transaction reset, PWM, servo, RGB and voltage limits.
 - Document that same-bus multi-hub examples require externally pre-addressed
   devices because v2 deliberately exposes no runtime address mutation.
-- Publish only the framework, target and topology support demonstrated by Phase
-  7 under ESPHome 2026.7.0.
-- Trace each public example to the already validated Phase 7 fixture from which
-  it is drawn. Because this phase changes documentation only, reuse the Phase 7
-  compile evidence instead of rerunning the complete matrix without a software
-  or fixture change.
+- Mark the new API as pending implementation and fresh validation; do not reuse
+  the superseded encoded-endpoint test evidence for channel/signal examples.
 
 Acceptance:
 
-- Every public example names the validated ESP-IDF fixture from which it is
-  drawn; topology examples also name the paired fixture compiled under both
-  frameworks.
-- No README platform names or addresses disagree with the schemas.
-- Every claimed example path is covered by the existing Phase 7 ESPHome 2026.7.0
-  matrix, without implying Arduino runtime validation or new hardware evidence.
+- Every example uses `channel`; selectable digital/PWM/servo features also use
+  `signal`, while ADC and RGB clearly document their fixed A/B bias and expose
+  no signal choice.
+- No README platform name, address or option disagrees with the accepted target
+  schema.
+- The README does not present the new API as validated before Phase 9 completes.
 - Privacy scan is clean.
 
-### Phase 9 - Hardware validation and release
+### Phase 9 - Channel/signal API rewrite and revalidation
+
+Status: complete.
 
 Changes:
 
-- Execute the hardware matrix below on classic ESP32 with ESP-IDF.
+- Replace public encoded `pin` and `slot` fields with required `channel: 0..5`.
+- Require lowercase `signal: a|b` for digital input, switch, PWM and servo.
+- Keep ADC fixed to signal A and RGB fixed to signal B; neither schema accepts a
+  `signal` field.
+- Convert the validated public fields to the existing internal `Endpoint`
+  channel/index type during code generation.
+- Rewrite ownership claims, generated-code checks, host tests and every positive
+  and negative YAML fixture for channel/signal terminology.
+- Add no aliases, deprecations or normalization for the replaced fields.
+- Run the complete host, schema, generated-source and ESP32 framework compile
+  matrix because this phase changes schemas and generated C++.
+
+Acceptance:
+
+- Channels 0 and 5 pass for every entity; values below 0 and above 5 fail.
+- Both signal values pass for digital input, switch, PWM and servo. A missing
+  signal, unknown value, uppercase value or signal on ADC/RGB fails clearly.
+- ADC channel N always generates endpoint `{N, 0}` and RGB channel N always
+  generates endpoint `{N, 1}`.
+- Digital input, switch, PWM and servo generate the exact selected signal index.
+- ADC and RGB coexist on the same channel, while every duplicate channel/signal
+  claim fails and reports both owners.
+- Encoded `pin` and `slot` configurations fail; no legacy alias exists.
+- All public examples correspond to passing fixtures after the rewrite.
+- The complete ESPHome 2026.7.0 validation and ESP-IDF/Arduino compile matrix
+  passes before the new API is described as tested.
+
+### Phase 10 - Hardware validation and release
+
+Status: pending real-hardware validation.
+
+Changes:
+
+- Execute the hardware matrix below on ESP32 with ESP-IDF.
 - Record measured values separately from calculated firmware values.
 - Fix host-side issues exposed by measurement.
 - Tag a v2 prerelease, validate a representative deployment, then prepare
@@ -1081,15 +1142,15 @@ Acceptance:
 
 ### Target ESPHome version
 
-The sole target is ESPHome 2026.7.0. All configuration validation, code
-generation and compilation runs use that exact version. Supporting another
-ESPHome release is separate future work and requires an explicit plan update.
+ESPHome 2026.7.0 is the validation target. The component does not enforce that
+version. Supporting another release may be possible, but no compatibility claim
+is made until it completes an equivalent validation pass.
 
 ### Frameworks and targets
 
-- Classic ESP32 with ESP-IDF is the canonical configuration, code-generation
-  and detailed compile target, and the planned Phase 9 real-hardware target.
-- Classic ESP32 with Arduino is a secondary compile-only compatibility target.
+- ESP32 with ESP-IDF is the canonical configuration, code-generation and
+  detailed compile target, and the planned Phase 10 real-hardware target.
+- ESP32 with Arduino is the paired framework compile target.
 - ESP8266 and ESP32-S3 are outside the v2 validation and support boundary.
 - Detailed positive/negative schema, generated-contract and firmware-fixture
   coverage runs once against ESP-IDF; strict host C++ tests remain
@@ -1099,18 +1160,18 @@ ESPHome release is separate future work and requires an explicit plan update.
   feature guards and supported topologies: direct I2C, two physical buses,
   multiple hubs sharing one bus and TCA9548A virtual channels, including the
   same default PBHUB address on isolated channels.
-- Planned Phase 9 real-hardware validation uses ESP-IDF only unless Arduino
+- Planned Phase 10 real-hardware validation uses ESP-IDF only unless Arduino
   runtime support is separately approved after its own hardware pass.
 
 ### Positive fixtures
 
 - Hub only.
-- Native digital input and switch across all twelve endpoints, including
-  inversion, polling intervals and restore modes.
-- All twelve valid endpoints.
-- ADC on all six slots.
+- Native digital input and switch on channels 0 through 5 and both signals,
+  including inversion, polling intervals and restore modes.
+- Both selectable signal values for PWM and servo.
+- ADC on all six channels, always signal A.
 - PWM mode with inversion, power scaling, both zero behaviors and independent
-  ADC signal A/PWM signal B ownership in one slot.
+  ADC signal A/PWM signal B ownership on one channel.
 - Servo mode through one ESPHome servo using stock, calibrated and reversed
   firmware-valid levels with zero transition length.
 - RGB counts 1 and 74.
@@ -1124,12 +1185,15 @@ ESPHome release is separate future work and requires an explicit plan update.
 
 ### Negative fixtures
 
-- Invalid endpoints including 2, 9, 19 and 49.
-- Slots below 0 or above 5.
+- Out-of-range channel fixtures span every entity domain; both the below-zero and
+  above-five boundaries are represented across the suite.
+- Missing and unknown signal fixtures cover each selectable platform. A
+  representative shared-validator fixture proves uppercase rejection.
+- Any `signal` option on ADC or RGB.
+- Replaced encoded `pin` and `slot` fields in every applicable domain.
 - RGB counts 0 and 75.
 - Unknown output and LED timing modes.
-- ADC configured with an endpoint instead of a slot.
-- Invalid native binary-sensor and switch endpoints.
+- Invalid native binary-sensor and switch channel/signal combinations.
 - Configurable PBHUB PWM frequency, RTTTL references and ESPHome servo using a
   PBHUB output in `mode: pwm`.
 - Servo inversion, non-neutral power scaling, `zero_means_zero: false`,
@@ -1137,7 +1201,7 @@ ESPHome release is separate future work and requires an explicit plan update.
   consumers.
 - RTTTL and runtime power/turn-on actions targeting a PBHUB servo output.
 - Duplicate binary sensors, duplicate switches and cross-domain features
-  claiming the same endpoint.
+  claiming the same channel/signal pair.
 
 ### Checks
 
@@ -1145,7 +1209,7 @@ The local validation runner should perform, as applicable:
 
 1. Host-side protocol, ownership, scheduling, recovery and entity behavior
    tests.
-2. `esphome config` for detailed positive fixtures under classic ESP32 with
+2. `esphome config` for detailed positive fixtures under ESP32 with
    ESP-IDF.
 3. Expected-failure assertions for negative fixtures under ESP-IDF.
 4. Generated-source contract checks under ESP-IDF.
@@ -1164,7 +1228,7 @@ repository policy changes explicitly.
 
 ## Required real-hardware matrix
 
-Execute this matrix on classic ESP32 with ESP-IDF. Arduino compilation is a
+Execute this matrix on ESP32 with ESP-IDF. Arduino compilation is a
 separate compatibility signal and does not become a runtime or hardware-support
 claim unless an Arduino hardware pass is later approved and recorded.
 
@@ -1249,7 +1313,8 @@ claim unless an Arduino hardware pass is later approved and recorded.
 
 The overhaul is complete only when all of the following are true:
 
-- Protocol helpers cannot encode an invalid endpoint or unsafe RGB range.
+- Protocol helpers cannot encode an invalid internal channel/index pair or unsafe
+  RGB range.
 - No feature command is sent before application firmware version `2` is
   verified.
 - Transport loss invalidates verification and applied-state caches; verified
@@ -1261,10 +1326,10 @@ The overhaul is complete only when all of the following are true:
   as ESPHome desired state and servo state/`has_reached_target()` as host-side
   command progression. None is described as physical feedback; the undetectable
   between-transaction hub-reset case is documented explicitly.
-- Endpoint conflicts fail before normal operation.
+- Channel/signal ownership conflicts fail before normal operation.
 - Digital, ADC, PWM, servo and uniform RGB behavior matches the datasheet.
 - The detailed configuration, code-generation and compile suite passes under
-  ESPHome 2026.7.0 on classic ESP32 with ESP-IDF.
+  ESPHome 2026.7.0 on ESP32 with ESP-IDF.
 - The core-only and full-surface smoke fixtures compile under both ESP-IDF and
   Arduino, without presenting Arduino compilation as runtime validation.
 - Direct-bus, two-physical-bus, same-bus multi-hub and TCA9548A topology paths
@@ -1273,7 +1338,7 @@ The overhaul is complete only when all of the following are true:
 - Public examples validate and compile under each framework explicitly claimed
   for that example.
 - Required hardware tests are recorded, with measured and calculated behavior
-  clearly separated, on classic ESP32 with ESP-IDF.
+  clearly separated, on ESP32 with ESP-IDF.
 - A representative deployment using only the clean v2 API runs through a
   meaningful soak period.
 - README and the clean-break release note state stock-firmware limitations

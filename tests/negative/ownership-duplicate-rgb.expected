@@ -1,1 +1,1 @@
-PBHUB endpoint 41 on hub 'test_hub' is claimed by both RGB light 'first_rgb' at light[0] and RGB light 'second_rgb' at light[1]
+PBHUB channel 4 signal B on hub 'test_hub' is claimed by both RGB light 'first_rgb' at light[0] and RGB light 'second_rgb' at light[1]

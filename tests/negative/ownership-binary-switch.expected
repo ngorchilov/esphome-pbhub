@@ -1,1 +1,1 @@
-PBHUB endpoint 30 on hub 'test_hub' is claimed by both digital input 'input_conflict' at binary_sensor[0] and digital output 'switch_conflict' at switch[0]
+PBHUB channel 3 signal A on hub 'test_hub' is claimed by both digital input 'input_conflict' at binary_sensor[0] and digital output 'switch_conflict' at switch[0]

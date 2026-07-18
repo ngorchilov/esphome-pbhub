@@ -12,10 +12,11 @@ sensor:
   - platform: pbhub
     id: adc_conflict
     pbhub_id: test_hub
-    slot: 2
+    channel: 2
 
 binary_sensor:
   - platform: pbhub
     id: input_conflict
     pbhub_id: test_hub
-    pin: 20
+    channel: 2
+    signal: a

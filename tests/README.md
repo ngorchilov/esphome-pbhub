@@ -1,11 +1,13 @@
 # Validation fixtures
 
-The fixtures exercise the PBHUB component against exactly ESPHome 2026.7.0.
-They contain no network credentials and use the repository's local
+The validation matrix targets ESPHome 2026.7.0; the component does not enforce
+that version. These fixtures define the channel/signal API, and the complete
+matrix has passed against that release. The fixtures contain no network
+credentials and use the repository's local
 `components/` directory through a relative path. The runner also builds and
 executes host-side protocol, ownership, recovery, scheduled-read serialization,
-native digital-entity, all-slot ADC, fixed-frequency PWM, direct-pulse servo and
-uniform-RGB scheduling, recovery and transport/health tests.
+native digital-entity, all-channel ADC, fixed-frequency PWM, direct-pulse servo
+and uniform-RGB scheduling, recovery and transport/health tests.
 
 Run all configuration and expected-failure checks with:
 
@@ -38,19 +40,20 @@ firmware brightness 255, safe fills, explicit black, non-finite rejection,
 coalescing, a fair parent-wide 50 ms fill cadence including timer wraparound,
 global timing and stop-on-failure recovery ordering. Schema fixtures prove the
 zero-transition default, explicit uniform effects/transitions and that LED timing
-is a parent-only option. The optional compile pass proves ESPHome code generation
-and integration for the hub-only, multi-hub, digital, PWM, servo, ADC, RGB and
-ownership surfaces. Neither command replaces real PBHUB hardware validation;
-ESPHome servo state and `has_reached_target()` are not transport or
+is a parent-only option. The optional compile pass proves ESPHome code
+generation and integration for the hub-only, multi-hub, digital, PWM, servo,
+ADC, RGB and ownership surfaces. Neither command replaces real PBHUB hardware
+validation; ESPHome servo state and `has_reached_target()` are not transport or
 physical-position feedback.
 
 ## Framework and topology matrix
 
-Phase 7 makes classic ESP32 with ESP-IDF the detailed behavior target and adds a
-small explicit parity matrix for framework-sensitive firmware compilation.
+ESP32 with ESP-IDF is the detailed behavior target. A small explicit parity
+matrix covers framework-sensitive firmware compilation under both supported
+frameworks.
 
-- Classic ESP32 with ESP-IDF is the primary configuration, code-generation and
-  detailed compile target, and the planned Phase 9 real-hardware target.
+- ESP32 with ESP-IDF is the primary configuration, code-generation and detailed
+  compile target, and the planned real-hardware target.
   Detailed positive/negative schema, generated-contract and controller firmware
   fixtures run once on ESP-IDF; strict host C++ tests remain framework-neutral.
 - Two shared scenarios compile under both ESP-IDF and Arduino: a core-only
@@ -64,26 +67,25 @@ small explicit parity matrix for framework-sensitive firmware compilation.
 - The runner verifies the resolved framework through the generated compiler
   definitions after each of the eleven ESPHome controller builds: nine ESP-IDF
   behavior fixtures and two Arduino parity fixtures.
-- Arduino is a compile-only compatibility target. Planned Phase 9 hardware
+- Arduino is a framework compile target. Planned hardware
   validation uses ESP-IDF unless Arduino runtime support is separately approved
   and tested.
 - ESP8266 and ESP32-S3 are outside the v2 validation and support boundary.
 
 ## Public documentation provenance
 
-The README's published v2 shapes are drawn from these already validated Phase 7
-fixtures:
+The README's published v2 shapes are backed by the following passing fixtures:
 
 | Public surface | Fixture authority |
 |---|---|
 | Minimal direct-bus hub | `common/esp32-idf.yaml`, `common/pbhub-core-only.yaml`, compiled by `positive/hub-only.yaml` |
 | Conflict-free all-entity example | Composite of `common/esp32-idf.yaml` and the feature-hub portion of `common/pbhub-full-topology.yaml` |
 | Digital input and output | `positive/digital-entities.yaml` |
-| Raw ADC | `positive/adc-slots.yaml` |
+| Raw ADC, channel with fixed signal A | `positive/adc-channels.yaml` |
 | Fixed PWM | `positive/pwm-contract.yaml` |
 | Direct servo | `positive/servo-contract.yaml` |
 | Uniform RGB | `positive/rgb-bounds.yaml` |
-| Exact endpoints and conflicts | `positive/all-endpoints.yaml`, `positive/ownership.yaml` and matching negative fixtures |
+| Channel/signal selection, fixed ADC/RGB signals and ownership conflicts | `positive/all-channel-signals.yaml`, `positive/ownership.yaml` and matching negative fixtures |
 | Two buses, same-bus addresses and TCA9548A channels | `common/esp32-idf-topology.yaml` and `common/pbhub-full-topology.yaml`, compiled by `positive/multi-hub.yaml` and `framework/arduino-topologies.yaml` |
 
 The public installation block replaces the fixtures' repository-local external

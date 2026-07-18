@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-invalid-rgb-slot-six
+  name: pbhub-legacy-pin-field
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -8,9 +8,9 @@ pbhub:
   id: test_hub
   i2c_id: test_i2c
 
-light:
+output:
   - platform: pbhub
-    id: invalid_rgb
+    id: legacy_output
     pbhub_id: test_hub
-    slot: 6
-    num_leds: 1
+    pin: 0
+    mode: pwm

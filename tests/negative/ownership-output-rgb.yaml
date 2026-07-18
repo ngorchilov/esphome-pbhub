@@ -12,12 +12,13 @@ output:
   - platform: pbhub
     id: pwm_conflict
     pbhub_id: test_hub
-    pin: 21
+    channel: 2
+    signal: b
     mode: pwm
 
 light:
   - platform: pbhub
     id: rgb_conflict
     pbhub_id: test_hub
-    slot: 2
+    channel: 2
     num_leds: 12

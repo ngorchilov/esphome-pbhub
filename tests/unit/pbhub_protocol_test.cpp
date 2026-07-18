@@ -32,22 +32,16 @@ int main() {
       {2500, {{0xC4, 0x09}}},
   }};
 
-  for (uint16_t encoded = 0; encoded <= 255; encoded++) {
-    Endpoint endpoint{0xEE, 0xEE};
-    const bool expected = encoded <= 51 && encoded / 10 <= 5 && encoded % 10 <= 1;
-    CHECK(decode_endpoint(static_cast<uint8_t>(encoded), endpoint) == expected);
-    if (expected) {
-      CHECK(endpoint.channel == encoded / 10);
-      CHECK(endpoint.index == encoded % 10);
-    } else {
-      CHECK(endpoint.channel == 0xEE);
-      CHECK(endpoint.index == 0xEE);
+  for (uint16_t channel = 0; channel <= 255; channel++) {
+    for (uint16_t index = 0; index <= 255; index++) {
+      const Endpoint endpoint{static_cast<uint8_t>(channel), static_cast<uint8_t>(index)};
+      CHECK(is_valid(endpoint) == (channel < CHANNEL_COUNT && index < SIGNAL_COUNT));
     }
   }
 
   std::array<bool, ENDPOINT_COUNT> ordinals{};
   for (uint8_t channel = 0; channel < CHANNEL_COUNT; channel++) {
-    for (uint8_t index = 0; index < 2; index++) {
+    for (uint8_t index = 0; index < SIGNAL_COUNT; index++) {
       const Endpoint endpoint{channel, index};
       uint8_t ordinal = 0xFF;
       CHECK(endpoint_ordinal(endpoint, ordinal));

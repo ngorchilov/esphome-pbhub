@@ -12,7 +12,7 @@ light:
   - platform: pbhub
     id: invalid_rgb
     pbhub_id: test_hub
-    slot: 0
+    channel: 0
     num_leds: 1
     effects:
       - addressable_rainbow:

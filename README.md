@@ -5,14 +5,15 @@ running the stock application protocol that reports firmware version `2`.
 
 The v2 component provides native ESPHome entities for digital input, digital
 output, raw ADC, fixed-frequency PWM, direct-pulse servo output and uniform RGB
-strips. It validates the PBHUB's real endpoint model, prevents conflicting use
-of one physical signal and restores desired outputs after a detected transport
-failure.
+strips. It validates the PBHUB's real channel/signal model, prevents conflicting
+use of one physical signal and restores desired outputs after a detected
+transport failure.
 
-> **Status:** the v2 software implementation and compile validation are complete
-> on the `v2` branch. Real PBHUB hardware validation remains to be completed
-> before release. Timing described as calculated or source-confirmed has not yet
-> been measured on hardware.
+> **Status:** the channel/signal API documented below has passed the repository's
+> ESPHome 2026.7.0 software-validation matrix, including ESP-IDF and Arduino
+> controller builds. Real PBHUB hardware validation remains pending. Timing
+> described as calculated or source-confirmed has not yet been measured on
+> hardware.
 
 ## Scope and support
 
@@ -20,7 +21,7 @@ failure.
 |---|---|
 | PBHUB device | M5Stack Unit PBHUB v1.1 / U041-B |
 | PBHUB application protocol | Self-reported version `2` |
-| ESPHome | Tested with `2026.7.0` |
+| ESPHome | Validation target: `2026.7.0` |
 | Frameworks | ESP-IDF and Arduino |
 | Controller | ESP32 |
 
@@ -71,7 +72,8 @@ binary_sensor:
   - platform: pbhub
     name: PBHUB Input
     pbhub_id: hub
-    pin: 0
+    channel: 0
+    signal: a
     inverted: false
     update_interval: 100ms
 
@@ -79,27 +81,30 @@ switch:
   - platform: pbhub
     name: PBHUB Output
     pbhub_id: hub
-    pin: 1
+    channel: 0
+    signal: b
     restore_mode: ALWAYS_OFF
 
 sensor:
   - platform: pbhub
     name: PBHUB Raw ADC
     pbhub_id: hub
-    slot: 1
+    channel: 1
     update_interval: 1s
 
 output:
   - platform: pbhub
     id: hub_pwm
     pbhub_id: hub
-    pin: 11
+    channel: 1
+    signal: b
     mode: pwm
 
   - platform: pbhub
     id: hub_servo_output
     pbhub_id: hub
-    pin: 20
+    channel: 2
+    signal: a
     mode: servo
 
 servo:
@@ -114,47 +119,48 @@ light:
   - platform: pbhub
     name: PBHUB Uniform RGB Strip
     pbhub_id: hub
-    slot: 2
+    channel: 2
     num_leds: 12
 ```
 
 This allocation is conflict-free:
 
-| Feature | Physical endpoint |
-|---|---:|
-| Digital input | `0` |
-| Digital switch | `1` |
-| ADC slot 1 | `10` (signal A) |
-| PWM | `11` |
-| Servo | `20` |
-| RGB slot 2 | `21` (signal B) |
+| Feature | Channel | Signal |
+|---|---:|:---:|
+| Digital input | `0` | A |
+| Digital switch | `0` | B |
+| ADC | `1` | A (fixed) |
+| PWM | `1` | B |
+| Servo | `2` | A |
+| RGB | `2` | B (fixed) |
 
-## Endpoint model and ownership
+## Channel, signal and ownership model
 
-An endpoint is encoded as `slot * 10 + signal`, where the slot is `0..5` and
-the signal is `0` for A or `1` for B.
+The PBHUB has six physical channels numbered `0` through `5`. Each channel has
+two independent signal lines, A and B. YAML names these directly instead of
+exposing a synthetic encoded pin number.
 
-| Slot | Signal A | Signal B |
-|---:|---:|---:|
-| 0 | `0` | `1` |
-| 1 | `10` | `11` |
-| 2 | `20` | `21` |
-| 3 | `30` | `31` |
-| 4 | `40` | `41` |
-| 5 | `50` | `51` |
+Digital input, switch, PWM and servo entities can select either line by combining
+`channel: 0..5` with the required lowercase `signal: a` or `signal: b`.
 
-These twelve values are the only valid `pin` values. Numbers such as `2`, `19`,
-`32` and `49` are invalid and fail configuration.
+The stock firmware fixes the other two features to one signal each:
 
-Each physical endpoint can have only one owner per hub:
+- ADC always uses signal A of the selected `channel`; it exposes no `signal`
+  option.
+- RGB always uses signal B of the selected `channel`; it exposes no `signal`
+  option.
 
-- digital input, switch, PWM and servo own their configured `pin`;
-- an ADC on `slot: N` owns signal A, endpoint `N * 10`;
-- an RGB light on `slot: N` owns signal B, endpoint `N * 10 + 1`.
+Each physical channel/signal pair can have only one owner per hub:
 
-Two entities cannot claim the same endpoint on the same hub. The configuration
-validator identifies both owners instead of allowing firmware mode changes to
-make them fight at runtime.
+- digital input, switch, PWM and servo own their configured `channel` and
+  `signal`;
+- an ADC on `channel: N` owns channel N, signal A;
+- an RGB light on `channel: N` owns channel N, signal B.
+
+Two entities cannot claim the same channel/signal pair on the same hub. The
+configuration validator identifies both owners instead of allowing firmware mode
+changes to make them fight at runtime. ADC and RGB can coexist on one channel
+because they own A and B respectively.
 
 ## YAML reference
 
@@ -198,7 +204,8 @@ binary_sensor:
   - platform: pbhub
     name: PBHUB Input
     pbhub_id: hub
-    pin: 30
+    channel: 3
+    signal: a
     inverted: false
     update_interval: 100ms
 ```
@@ -206,7 +213,8 @@ binary_sensor:
 | Option | Default | Requirement and behavior |
 |---|---:|---|
 | `pbhub_id` | - | Required parent hub. |
-| `pin` | - | Required exact endpoint. Reading it configures that signal as a floating input. |
+| `channel` | - | Required integer `0..5`. |
+| `signal` | - | Required lowercase `a` or `b`. Reading configures this signal as a floating input. |
 | `inverted` | `false` | Applied only after a successful raw read. |
 | `update_interval` | `100ms` | Polling interval. Short pulses between polls can be missed. |
 
@@ -224,7 +232,8 @@ switch:
   - platform: pbhub
     name: PBHUB Output
     pbhub_id: hub
-    pin: 31
+    channel: 3
+    signal: b
     inverted: false
     restore_mode: ALWAYS_OFF
 ```
@@ -232,7 +241,8 @@ switch:
 | Option | Default | Requirement and behavior |
 |---|---:|---|
 | `pbhub_id` | - | Required parent hub. |
-| `pin` | - | Required exact endpoint. |
+| `channel` | - | Required integer `0..5`. |
+| `signal` | - | Required lowercase `a` or `b`. |
 | `inverted` | `false` | Standard ESPHome logical inversion. |
 | `restore_mode` | `ALWAYS_OFF` | Logical-off command default; another ESPHome switch restore mode must be selected explicitly. |
 
@@ -250,14 +260,14 @@ sensor:
   - platform: pbhub
     name: PBHUB Raw ADC
     pbhub_id: hub
-    slot: 3
+    channel: 3
     update_interval: 1s
 ```
 
 | Option | Default | Requirement and behavior |
 |---|---:|---|
 | `pbhub_id` | - | Required parent hub. |
-| `slot` | - | Required integer `0..5`; ADC always uses signal A. |
+| `channel` | - | Required integer `0..5`. ADC always uses signal A; a `signal` option is not accepted. |
 | `update_interval` | `1s` | Polling interval. |
 
 The sensor publishes a unitless raw integer from `0` through `4095`, with no
@@ -274,11 +284,13 @@ output:
   - platform: pbhub
     id: hub_pwm
     pbhub_id: hub
-    pin: 11
+    channel: 1
+    signal: b
     mode: pwm
 ```
 
-`mode` is required. PWM accepts the standard ESPHome float-output transforms,
+`channel`, `signal` and `mode` are required. PWM can use signal A or B and
+accepts the standard ESPHome float-output transforms,
 including `inverted`, `min_power`, `max_power` and `zero_means_zero`. The final
 level `0.0..1.0` is rounded to a duty byte `0..255`.
 
@@ -308,7 +320,8 @@ output:
   - platform: pbhub
     id: hub_servo_output
     pbhub_id: hub
-    pin: 20
+    channel: 2
+    signal: a
     mode: servo
 
 servo:
@@ -320,7 +333,8 @@ servo:
     transition_length: 0s
 ```
 
-The PBHUB servo output interprets the ESPHome float level as a fraction of a
+`channel`, `signal` and `mode` are required. Servo can use signal A or B. The
+PBHUB servo output interprets the ESPHome float level as a fraction of a
 20,000 us frame and writes the firmware's direct pulse register. The accepted
 nonzero range is `2.5%..12.5%`, corresponding to `500..2500 us`; exact zero
 sends digital low and detaches the output.
@@ -356,14 +370,14 @@ light:
   - platform: pbhub
     name: PBHUB Uniform RGB Strip
     pbhub_id: hub
-    slot: 2
+    channel: 2
     num_leds: 12
 ```
 
 | Option | Default | Requirement and behavior |
 |---|---:|---|
 | `pbhub_id` | - | Required parent hub. |
-| `slot` | - | Required integer `0..5`; RGB always uses signal B. |
+| `channel` | - | Required integer `0..5`. RGB always uses signal B; a `signal` option is not accepted. |
 | `num_leds` | - | Required integer `1..74`. |
 | `restore_mode` | `ALWAYS_OFF` | Standard ESPHome light restore mode with a logical-off command default. |
 | `default_transition_length` | `0s` | Ordinary changes use one fill unless the user opts into transitions. |
@@ -437,7 +451,7 @@ pbhub:
     address: 0x61
 ```
 
-The hubs are independent parents: endpoint ownership, communication health and
+The hubs are independent parents: signal ownership, communication health and
 output recovery are tracked separately for each `pbhub` ID.
 
 ## State, failure and recovery semantics
@@ -482,19 +496,15 @@ acknowledgement or physical-output feedback.
 - Variable-frequency PWM, RTTTL and pseudo-servo through PWM.
 - Addressable RGB effects or RGBW output.
 - Runtime I2C address mutation, MCU reset, IAP or firmware flashing.
-- Multiple entities owning one physical endpoint.
+- Multiple entities owning one physical channel/signal pair.
 
 ## Validation and technical references
 
-The current software validation was run with ESPHome 2026.7.0. The component has
-no explicit ESPHome version constraint; other releases may work but have not
-been tested. The complete component surface configures and compiles with both
-ESP-IDF and Arduino on ESP32. Strict host C++ tests cover protocol construction,
-ownership, scheduling, recovery and entity state behavior independently of the
-ESP32 framework.
-
-Public example provenance is recorded in the
-[fixture guide](tests/README.md). The main sources of truth are:
+ESPHome 2026.7.0 is the validation target, not a version requirement enforced by
+the component. The channel/signal schemas, generated code and ESP-IDF/Arduino
+builds have completed the repository matrix. The
+[fixture guide](tests/README.md) documents that matrix and its commands. The main
+sources of truth are:
 
 - [PBHUB v1.1 internal firmware protocol datasheet](docs/pbhub-firmware-protocol.md)
 - [ESPHome PBHUB v2 implementation plan](docs/v2-implementation-plan.md)

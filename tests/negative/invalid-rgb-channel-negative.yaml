@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-bad-rgb-channel-low
+
+packages:
+  common: !include ../common/esp32-idf.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+light:
+  - platform: pbhub
+    id: invalid_rgb
+    pbhub_id: test_hub
+    channel: -1
+    num_leds: 1

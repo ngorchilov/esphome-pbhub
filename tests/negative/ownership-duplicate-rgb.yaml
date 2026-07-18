@@ -12,10 +12,10 @@ light:
   - platform: pbhub
     id: first_rgb
     pbhub_id: test_hub
-    slot: 4
+    channel: 4
     num_leds: 1
   - platform: pbhub
     id: second_rgb
     pbhub_id: test_hub
-    slot: 4
+    channel: 4
     num_leds: 74

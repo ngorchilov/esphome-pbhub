@@ -107,7 +107,7 @@ static void test_scaling_coalescing_and_rate_limit() {
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   hub.set_led_timing_mode(1);
-  CHECK(hub.claim_endpoint(1, EndpointOwner::RGB, "rgb"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::RGB, "rgb"));
   CHECK(hub.register_recovery_client(&rgb));
 
   bus.expect_read(0x61, protocol::REG_FIRMWARE_VERSION, {protocol::EXPECTED_FIRMWARE_VERSION});
@@ -212,8 +212,8 @@ static void test_parent_wide_fairness() {
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(1, EndpointOwner::RGB, "first"));
-  CHECK(hub.claim_endpoint(11, EndpointOwner::RGB, "second"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::RGB, "first"));
+  CHECK(hub.claim_endpoint(1, 1, EndpointOwner::RGB, "second"));
   CHECK(hub.register_recovery_client(&first));
   CHECK(hub.register_recovery_client(&second));
 
@@ -278,7 +278,7 @@ static void test_failed_fill_replays_latest_desired() {
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   hub.set_led_timing_mode(0);
-  CHECK(hub.claim_endpoint(21, EndpointOwner::RGB, "rgb"));
+  CHECK(hub.claim_endpoint(2, 1, EndpointOwner::RGB, "rgb"));
   CHECK(hub.register_recovery_client(&rgb));
 
   bus.expect_read(0x61, protocol::REG_FIRMWARE_VERSION, {protocol::EXPECTED_FIRMWARE_VERSION});
@@ -326,7 +326,7 @@ static void test_recovery_stage_failures_stop_replay() {
     hub.set_i2c_bus(&bus);
     hub.set_i2c_address(0x61);
     hub.set_led_timing_mode(1);
-    CHECK(hub.claim_endpoint(31, EndpointOwner::RGB, "rgb"));
+    CHECK(hub.claim_endpoint(3, 1, EndpointOwner::RGB, "rgb"));
     CHECK(hub.register_recovery_client(&rgb));
 
     bus.expect_read(0x61, protocol::REG_FIRMWARE_VERSION, {protocol::EXPECTED_FIRMWARE_VERSION});

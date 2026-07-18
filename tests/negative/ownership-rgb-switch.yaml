@@ -12,11 +12,12 @@ light:
   - platform: pbhub
     id: rgb_conflict
     pbhub_id: test_hub
-    slot: 2
+    channel: 2
     num_leds: 1
 
 switch:
   - platform: pbhub
     id: switch_conflict
     pbhub_id: test_hub
-    pin: 21
+    channel: 2
+    signal: b

@@ -12,11 +12,12 @@ output:
   - platform: pbhub
     id: pwm_conflict
     pbhub_id: test_hub
-    pin: 20
+    channel: 2
+    signal: a
     mode: pwm
 
 sensor:
   - platform: pbhub
     id: adc_conflict
     pbhub_id: test_hub
-    slot: 2
+    channel: 2

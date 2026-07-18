@@ -1,14 +1,16 @@
 import esphome.codegen as cg
 from esphome.components import switch
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_PIN
+from esphome.const import CONF_CHANNEL, CONF_ID
 
 from . import (
     CONF_PBHUB_ID,
+    CONF_SIGNAL,
     EndpointOwner,
     PbHubComponent,
     pbhub_ns,
-    validate_endpoint,
+    validate_channel,
+    validate_signal,
 )
 
 CODEOWNERS = ["@ngorchilov"]
@@ -23,17 +25,22 @@ CONFIG_SCHEMA = switch.switch_schema(
 ).extend(
     {
         cv.Required(CONF_PBHUB_ID): cv.use_id(PbHubComponent),
-        cv.Required(CONF_PIN): validate_endpoint,
+        cv.Required(CONF_CHANNEL): validate_channel,
+        cv.Required(CONF_SIGNAL): validate_signal,
     }
 )
 
 
 async def to_code(config):
     parent = await cg.get_variable(config[CONF_PBHUB_ID])
-    var = await switch.new_switch(config, parent, config[CONF_PIN])
+    signal = config[CONF_SIGNAL]
+    var = await switch.new_switch(config, parent, config[CONF_CHANNEL], signal)
     cg.add(
         parent.claim_endpoint(
-            config[CONF_PIN], EndpointOwner.DIGITAL_OUTPUT, str(config[CONF_ID])
+            config[CONF_CHANNEL],
+            signal,
+            EndpointOwner.DIGITAL_OUTPUT,
+            str(config[CONF_ID]),
         )
     )
     cg.add(parent.register_recovery_client(var))

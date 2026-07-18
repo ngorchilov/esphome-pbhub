@@ -31,28 +31,31 @@ binary_sensor:
   - platform: pbhub
     id: topology_binary_sensor
     pbhub_id: feature_hub
-    pin: 0
+    channel: 0
+    signal: a
     update_interval: 100ms
 
 switch:
   - platform: pbhub
     id: topology_switch
     pbhub_id: feature_hub
-    pin: 1
+    channel: 0
+    signal: b
     restore_mode: ALWAYS_OFF
 
 sensor:
   - platform: pbhub
     id: topology_adc
     pbhub_id: feature_hub
-    slot: 1
+    channel: 1
     update_interval: 1s
 
 output:
   - platform: pbhub
     id: topology_pwm
     pbhub_id: feature_hub
-    pin: 11
+    channel: 1
+    signal: b
     mode: pwm
     min_power: 10%
     max_power: 90%
@@ -60,27 +63,32 @@ output:
   - platform: pbhub
     id: topology_servo_output
     pbhub_id: feature_hub
-    pin: 20
+    channel: 2
+    signal: a
     mode: servo
   - platform: pbhub
     id: topology_same_bus_pwm
     pbhub_id: same_bus_hub
-    pin: 0
+    channel: 0
+    signal: a
     mode: pwm
   - platform: pbhub
     id: topology_primary_bus_pwm
     pbhub_id: primary_bus_hub
-    pin: 0
+    channel: 0
+    signal: a
     mode: pwm
   - platform: pbhub
     id: topology_multiplexed_3_pwm
     pbhub_id: multiplexed_hub_3
-    pin: 0
+    channel: 0
+    signal: a
     mode: pwm
   - platform: pbhub
     id: topology_multiplexed_4_pwm
     pbhub_id: multiplexed_hub_4
-    pin: 0
+    channel: 0
+    signal: a
     mode: pwm
 
 servo:
@@ -95,5 +103,5 @@ light:
   - platform: pbhub
     id: topology_rgb
     pbhub_id: feature_hub
-    slot: 2
+    channel: 2
     num_leds: 12

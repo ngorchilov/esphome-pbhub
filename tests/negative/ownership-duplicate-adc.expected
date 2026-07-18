@@ -1,1 +1,1 @@
-PBHUB endpoint 30 on hub 'test_hub' is claimed by both ADC sensor 'first_adc' at sensor[0] and ADC sensor 'second_adc' at sensor[1]
+PBHUB channel 3 signal A on hub 'test_hub' is claimed by both ADC sensor 'first_adc' at sensor[0] and ADC sensor 'second_adc' at sensor[1]

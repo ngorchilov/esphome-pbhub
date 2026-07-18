@@ -85,13 +85,13 @@ class ScriptedI2CBus final : public i2c::I2CBus {
   size_t transaction_count_{0};
 };
 
-static void setup_ready_servo(PbHubComponent &hub, PbHubServoOutput &servo, ScriptedI2CBus &bus, uint8_t endpoint,
-                              uint8_t detach_register) {
+static void setup_ready_servo(PbHubComponent &hub, PbHubServoOutput &servo, ScriptedI2CBus &bus, uint8_t channel,
+                              uint8_t signal_index, uint8_t detach_register) {
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   servo.set_zero_means_zero(true);
   CHECK(servo.get_setup_priority() > hub.get_setup_priority());
-  CHECK(hub.claim_endpoint(endpoint, EndpointOwner::SERVO, "servo"));
+  CHECK(hub.claim_endpoint(channel, signal_index, EndpointOwner::SERVO, "servo"));
   CHECK(hub.register_recovery_client(&servo));
 
   servo.setup();
@@ -108,8 +108,8 @@ static void setup_ready_servo(PbHubComponent &hub, PbHubServoOutput &servo, Scri
 static void test_startup_staging_and_calibrated_pulses_on_a_and_b() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput signal_a(&hub, 20);
-  PbHubServoOutput signal_b(&hub, 21);
+  PbHubServoOutput signal_a(&hub, 2, 0);
+  PbHubServoOutput signal_b(&hub, 2, 1);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
@@ -117,8 +117,8 @@ static void test_startup_staging_and_calibrated_pulses_on_a_and_b() {
   signal_b.set_zero_means_zero(true);
   CHECK(signal_a.get_setup_priority() > hub.get_setup_priority());
   CHECK(signal_b.get_setup_priority() > hub.get_setup_priority());
-  CHECK(hub.claim_endpoint(20, EndpointOwner::SERVO, "servo_a"));
-  CHECK(hub.claim_endpoint(21, EndpointOwner::SERVO, "servo_b"));
+  CHECK(hub.claim_endpoint(2, 0, EndpointOwner::SERVO, "servo_a"));
+  CHECK(hub.claim_endpoint(2, 1, EndpointOwner::SERVO, "servo_b"));
   CHECK(hub.register_recovery_client(&signal_a));
   CHECK(hub.register_recovery_client(&signal_b));
 
@@ -155,12 +155,12 @@ static void test_startup_staging_and_calibrated_pulses_on_a_and_b() {
 static void test_preprobe_desired_pulse_is_preserved() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 11);
+  PbHubServoOutput servo(&hub, 1, 1);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   servo.set_zero_means_zero(true);
-  CHECK(hub.claim_endpoint(11, EndpointOwner::SERVO, "preseeded_servo"));
+  CHECK(hub.claim_endpoint(1, 1, EndpointOwner::SERVO, "preseeded_servo"));
   CHECK(hub.register_recovery_client(&servo));
 
   servo.set_level(0.075f);
@@ -177,8 +177,8 @@ static void test_preprobe_desired_pulse_is_preserved() {
 static void test_rounding_dedup_and_detach_transitions() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 21);
-  setup_ready_servo(hub, servo, bus, 21, 0x61);
+  PbHubServoOutput servo(&hub, 2, 1);
+  setup_ready_servo(hub, servo, bus, 2, 1, 0x61);
 
   bus.expect_write(0x61, 0x6F, {0xF4, 0x01});
   servo.set_level(0.024999f);
@@ -208,8 +208,8 @@ static void test_rounding_dedup_and_detach_transitions() {
 static void test_invalid_and_nonfinite_levels_preserve_state() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 1);
-  setup_ready_servo(hub, servo, bus, 1, 0x41);
+  PbHubServoOutput servo(&hub, 0, 1);
+  setup_ready_servo(hub, servo, bus, 0, 1, 0x41);
   unit_test_warning_count = 0;
 
   bus.expect_write(0x61, 0x4F, {0xDC, 0x05});
@@ -258,8 +258,8 @@ static void test_invalid_and_nonfinite_levels_preserve_state() {
 static void test_runtime_transform_defense_and_zero_detach() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 1);
-  setup_ready_servo(hub, servo, bus, 1, 0x41);
+  PbHubServoOutput servo(&hub, 0, 1);
+  setup_ready_servo(hub, servo, bus, 0, 1, 0x41);
   unit_test_warning_count = 0;
 
   bus.expect_write(0x61, 0x4F, {0xDC, 0x05});
@@ -310,8 +310,8 @@ static void test_runtime_transform_defense_and_zero_detach() {
 static void test_frequency_is_a_warning_only_noop() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 1);
-  setup_ready_servo(hub, servo, bus, 1, 0x41);
+  PbHubServoOutput servo(&hub, 0, 1);
+  setup_ready_servo(hub, servo, bus, 0, 1, 0x41);
   unit_test_warning_count = 0;
 
   bus.expect_write(0x61, 0x4F, {0xDC, 0x05});
@@ -331,8 +331,8 @@ static void test_frequency_is_a_warning_only_noop() {
 static void test_failed_write_offline_last_valid_and_recovery() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 11);
-  setup_ready_servo(hub, servo, bus, 11, 0x51);
+  PbHubServoOutput servo(&hub, 1, 1);
+  setup_ready_servo(hub, servo, bus, 1, 1, 0x51);
 
   bus.expect_write(0x61, 0x5F, {0xDC, 0x05});
   servo.set_level(0.075f);
@@ -363,8 +363,8 @@ static void test_failed_write_offline_last_valid_and_recovery() {
 static void test_failed_detach_replays_detach_after_recovery() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubServoOutput servo(&hub, 30);
-  setup_ready_servo(hub, servo, bus, 30, 0x70);
+  PbHubServoOutput servo(&hub, 3, 0);
+  setup_ready_servo(hub, servo, bus, 3, 0, 0x70);
 
   bus.expect_write(0x61, 0x7E, {0xDC, 0x05});
   servo.set_level(0.075f);

@@ -84,17 +84,17 @@ class ScriptedI2CBus final : public i2c::I2CBus {
 static void test_supported_startup_and_recovery() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMOutput pwm(&hub, 1);
+  PbHubPWMOutput pwm(&hub, 0, 1);
   PbHubRGBLight rgb(&hub, 1);
   rgb.set_led_count(12);
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
   CHECK(hub.get_setup_priority() == setup_priority::IO);
-  CHECK(hub.claim_endpoint(0, EndpointOwner::ADC, "test_adc"));
-  CHECK(hub.claim_endpoint(1, EndpointOwner::PWM, "test_pwm"));
-  CHECK(hub.claim_endpoint(10, EndpointOwner::SERVO, "test_servo"));
-  CHECK(hub.claim_endpoint(11, EndpointOwner::RGB, "test_rgb"));
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::ADC, "test_adc"));
+  CHECK(hub.claim_endpoint(0, 1, EndpointOwner::PWM, "test_pwm"));
+  CHECK(hub.claim_endpoint(1, 0, EndpointOwner::SERVO, "test_servo"));
+  CHECK(hub.claim_endpoint(1, 1, EndpointOwner::RGB, "test_rgb"));
   CHECK(hub.register_recovery_client(&pwm));
   CHECK(hub.register_recovery_client(&rgb));
 
@@ -172,7 +172,7 @@ static void test_unsupported_firmware_is_terminal() {
 
   hub.set_i2c_bus(&bus);
   hub.set_i2c_address(0x61);
-  CHECK(hub.claim_endpoint(0, EndpointOwner::ADC, "test_adc"));
+  CHECK(hub.claim_endpoint(0, 0, EndpointOwner::ADC, "test_adc"));
 
   bus.expect_read_failure(0x61, protocol::REG_FIRMWARE_VERSION, 1, i2c::ERROR_TIMEOUT);
   hub.setup();

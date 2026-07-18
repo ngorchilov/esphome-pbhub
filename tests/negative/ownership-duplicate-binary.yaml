@@ -12,8 +12,10 @@ binary_sensor:
   - platform: pbhub
     id: first_input
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
   - platform: pbhub
     id: second_input
     pbhub_id: test_hub
-    pin: 0
+    channel: 0
+    signal: a
