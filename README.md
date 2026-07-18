@@ -4,6 +4,19 @@ Custom ESPHome component for the M5Stack PBHUB / PortHub.
 
 ---
 
+## Technical Reference
+
+- [PBHUB v1.1 internal firmware protocol datasheet](docs/pbhub-firmware-protocol.md)
+- [ESPHome PBHUB v2 implementation plan](docs/v2-implementation-plan.md)
+
+The datasheet records the behavior of M5Stack's STM32 firmware, including known
+protocol limitations and source-confirmed defects. The implementation plan is a
+design document; the current component has not yet been replaced by that v2
+implementation. The usage guide below describes the legacy component and includes
+known inaccuracies scheduled for correction during the v2 implementation.
+
+---
+
 ## Description and Features
 
 This ESPHome component adds support for the [M5Stack PBHUB / PortHub](https://docs.m5stack.com/en/unit/pbhub), allowing you to easily expand the number of digital, analog, and PWM-capable I/O ports on your ESP32/ESP8266 device using I2C.
