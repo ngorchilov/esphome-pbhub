@@ -5,7 +5,9 @@ split into reviewable phases. The protocol and safety decisions come from
 [the firmware datasheet](pbhub-firmware-protocol.md), which remains the source of
 truth when implementation details are debated later.
 
-This phase changes documentation only. It does not yet change component behavior.
+Phase 0 changed documentation only. The later phases implement this plan in
+reviewable commits, with their acceptance criteria serving as the completion
+boundary for each commit.
 
 ## Goals
 
@@ -584,8 +586,10 @@ parent recovery path so that the command can replay.
 
 The PWM typed operation accepts the encoded duty byte but sends digital low for
 0, digital high for 255 and the firmware PWM register only for 1 through 254.
-The applied cache includes the effective command mode so transitions between a
-digital extremum and intermediate PWM are never incorrectly skipped.
+One protocol helper derives the effective command mode from the duty, and the
+applied cache records that duty and its derived mode together. This prevents the
+cache and register selection from disagreeing while ensuring that transitions
+between a digital extremum and intermediate PWM are never incorrectly skipped.
 
 Binary-sensor and ADC polling intervals enqueue read requests in a parent-owned,
 fixed-capacity FIFO. Duplicate requests from the same entity coalesce while
@@ -642,9 +646,14 @@ remains.
 ### ADC sensor
 
 - Slot only, signal A implicit.
-- Raw range `0..4095`, zero accuracy decimals, no invented unit.
+- Raw range `0..4095`, zero accuracy decimals, an empty unit, measurement state
+  class and no invented device class or voltage conversion.
 - Default update interval: 1 s, configurable.
-- A detected I2C failure preserves last state.
+- An initial detected I2C failure leaves the sensor unknown; a later failure
+  preserves its last published state and does not republish it.
+- A response above `4095` is a protocol failure and is not published.
+- Aggressive polling increases clock-stretched ADC traffic and can worsen the
+  firmware's PWM and servo timing; choose intervals according to actual needs.
 - Documentation states that a successful read can still be stale after the
   source-confirmed firmware ADC timeout; v2 cannot guarantee sample freshness.
 - Documentation warns that the signal is 3.3 V logic/ADC and must not be driven
@@ -652,14 +661,27 @@ remains.
 
 ### PWM output
 
-- Clamp input to `0.0..1.0`, round to `0..255`.
+- Use ESPHome 2026.7.0's normal `FloatOutput` transforms for inversion,
+  minimum/maximum power and `zero_means_zero`. Treat the resulting finite level
+  as the final electrical duty, clamp it to `0.0..1.0` and round to `0..255`
+  without applying any transform twice.
+- Before the parent starts recovery, stage logical level zero unless a consumer
+  has already supplied a desired level. This creates a deterministic startup
+  command while respecting configured `FloatOutput` transforms.
+- Reject a NaN level that reaches the driver without changing desired or applied
+  state. ESPHome's public `set_level()` clamps positive and negative infinity to
+  the normal high and low extrema before the driver sees them.
 - Send encoded 0 as digital low, encoded 255 as digital high and only 1 through
   254 through the PWM register.
-- Cache both encoded value and effective command mode; skip only a repeated,
-  successfully transported value while applied state remains known.
+- Cache the encoded value and its helper-derived effective command mode; skip
+  only a repeated, successfully transported value while applied state remains
+  known.
 - Advertise fixed calculated nominal frequency, not a configurable frequency.
 - Override ESPHome 2026.7.0's `update_frequency(float)` hook, leave the fixed
-  frequency unchanged and emit one throttled warning. Do not claim RTTTL support.
+  frequency and caches unchanged and emit one warning per output per boot.
+- Reject a `frequency:` option, RTTTL references and use of `mode: pwm` by the
+  ESPHome servo component during configuration. Keep the runtime frequency hook
+  as defense for direct calls and future consumers.
 
 ### Servo output
 
@@ -795,18 +817,42 @@ Acceptance:
 
 Changes:
 
-- Replace pin-shaped ADC schema with slot.
-- Publish raw ADC only on successful reads.
-- Rebuild PWM conversion, mode-aware caching and fixed-frequency reporting.
+- Finalize the slot-based ADC schema, raw metadata, configuration logging and
+  success-only publication contract.
+- Rebuild PWM as a setup-ordered component with standard ESPHome output
+  transforms, exact duty conversion, helper-derived mode-aware caching and
+  fixed-frequency reporting.
+- Reject unsupported variable-frequency consumers and add dedicated host and
+  YAML contract tests.
 
 Acceptance:
 
-- All six ADC slots produce the correct register and read two little-endian bytes.
-- Valid ADC zero publishes as zero; I2C failure does not.
+- All six ADC slots produce the correct register and read exactly two
+  little-endian bytes.
+- Valid ADC zero and 4095 publish exactly; an initial I2C failure remains unknown
+  and a later failure preserves the last state without republishing it.
+- An ADC response above 4095 enters bounded protocol recovery without publishing,
+  while an invalid runtime slot produces no I2C transaction or health change.
+- ADC signal A and PWM signal B in one slot can coexist; a successful ADC poll
+  does not invalidate or replay the PWM cache.
+- The successful-but-stale response possible after the firmware's internal ADC
+  timeout remains documented as an irreducible limitation.
 - PWM encoded 0 sends digital low, encoded 255 sends digital high and values 1
   through 254 use the correct PWM register and duty byte.
+- Duty rounding, inversion, power scaling and both `zero_means_zero` behaviors
+  match ESPHome 2026.7.0 `FloatOutput` semantics without double transforms.
 - Transitions between a digital extremum and intermediate PWM are not skipped by
-  the applied-state cache.
+  the applied-state cache; repeated values and levels in one encoded-duty bucket
+  do not generate duplicate I2C writes after success.
+- Startup stages a deterministic logical-zero command before parent recovery,
+  unless a desired level was already supplied.
+- A failed write keeps the newest desired level, invalidates applied state and
+  replays the exact desired command only after firmware version 2 is reverified.
+- Runtime frequency requests leave transport and caches unchanged and warn only
+  once; `frequency:`, RTTTL use and pseudo-servo through `mode: pwm` fail YAML
+  validation.
+- A NaN driver-level value cannot become an output command, while infinities
+  passed through ESPHome's public API clamp to the normal extrema.
 - Detected recovery replays the desired encoded PWM level using the same
   digital-extrema rule.
 - RTTTL is no longer shown as supported.
@@ -908,7 +954,8 @@ ESPHome release is separate future work and requires an explicit plan update.
   inversion, polling intervals and restore modes.
 - All twelve valid endpoints.
 - ADC on all six slots.
-- PWM mode.
+- PWM mode with inversion, power scaling, both zero behaviors and independent
+  ADC signal A/PWM signal B ownership in one slot.
 - Servo mode through ESPHome servo.
 - RGB counts 1 and 74.
 - Multiple hubs and buses.
@@ -921,6 +968,8 @@ ESPHome release is separate future work and requires an explicit plan update.
 - Unknown output and LED timing modes.
 - ADC configured with an endpoint instead of a slot.
 - Invalid native binary-sensor and switch endpoints.
+- Configurable PBHUB PWM frequency, RTTTL references and ESPHome servo using a
+  PBHUB output in `mode: pwm`.
 - Servo inversion, non-neutral power scaling and `zero_means_zero: false`.
 - Duplicate binary sensors, duplicate switches and cross-domain features
   claiming the same endpoint.

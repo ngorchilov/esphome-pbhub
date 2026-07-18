@@ -15,7 +15,9 @@ from . import (
 CODEOWNERS = ["@ngorchilov"]
 DEPENDENCIES = ["pbhub"]
 
-PbHubPWMOutput = pbhub_ns.class_("PbHubPWMPin", output.FloatOutput)
+PbHubPWMOutput = pbhub_ns.class_(
+    "PbHubPWMOutput", output.FloatOutput, cg.Component
+)
 
 CONFIG_SCHEMA = output.FLOAT_OUTPUT_SCHEMA.extend(
     {
@@ -37,3 +39,4 @@ async def to_code(config):
     )
     cg.add(parent.register_recovery_client(var))
     await output.register_output(var, config)
+    await cg.register_component(var, config)

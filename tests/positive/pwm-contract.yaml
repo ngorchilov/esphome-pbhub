@@ -1,0 +1,44 @@
+esphome:
+  name: pbhub-phase4-pwm-contract
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+# Signal A and signal B in one slot are independent endpoints.
+sensor:
+  - platform: pbhub
+    id: adc_slot_0
+    pbhub_id: test_hub
+    slot: 0
+
+output:
+  - platform: pbhub
+    id: pwm_signal_b
+    pbhub_id: test_hub
+    pin: 1
+    mode: pwm
+  - platform: pbhub
+    id: pwm_inverted
+    pbhub_id: test_hub
+    pin: 10
+    mode: pwm
+    inverted: true
+  - platform: pbhub
+    id: pwm_scaled_zero
+    pbhub_id: test_hub
+    pin: 11
+    mode: pwm
+    min_power: 10%
+    max_power: 90%
+    zero_means_zero: true
+  - platform: pbhub
+    id: pwm_scaled_floor
+    pbhub_id: test_hub
+    pin: 20
+    mode: pwm
+    min_power: 20%
+    max_power: 80%

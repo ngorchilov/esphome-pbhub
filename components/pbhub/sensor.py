@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 from esphome.components import sensor
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, ICON_EMPTY, UNIT_EMPTY
+from esphome.const import CONF_ID, STATE_CLASS_MEASUREMENT, UNIT_EMPTY
 
 from . import (
     CONF_PBHUB_ID,
@@ -19,13 +19,13 @@ PbHubADC = pbhub_ns.class_("PbHubADC", sensor.Sensor, cg.PollingComponent)
 
 CONFIG_SCHEMA = (
     sensor.sensor_schema(
+        PbHubADC,
         unit_of_measurement=UNIT_EMPTY,
-        icon=ICON_EMPTY,
         accuracy_decimals=0,
+        state_class=STATE_CLASS_MEASUREMENT,
     )
     .extend(
         {
-            cv.GenerateID(CONF_ID): cv.declare_id(PbHubADC),
             cv.Required(CONF_PBHUB_ID): cv.use_id(PbHubComponent),
             cv.Required(CONF_SLOT): validate_slot,
         }

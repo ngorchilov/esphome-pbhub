@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+#include "esphome/core/log.h"
+
 namespace esphome::sensor {
 
 class Sensor {
@@ -24,3 +26,5 @@ class Sensor {
 };
 
 }  // namespace esphome::sensor
+
+#define LOG_SENSOR(prefix, type, sensor) ::esphome::unit_test_log(prefix, type, sensor)

@@ -13,7 +13,7 @@ sensor:
     id: adc_slot_0
     pbhub_id: test_hub
     slot: 0
-    update_interval: 1s
+    update_interval: 250ms
   - platform: pbhub
     id: adc_slot_1
     pbhub_id: test_hub

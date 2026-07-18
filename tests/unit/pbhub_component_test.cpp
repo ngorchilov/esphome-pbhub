@@ -84,7 +84,7 @@ class ScriptedI2CBus final : public i2c::I2CBus {
 static void test_supported_startup_and_recovery() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
-  PbHubPWMPin pwm(&hub, 1);
+  PbHubPWMOutput pwm(&hub, 1);
   PbHubRGBLight rgb(&hub, 1);
   rgb.set_led_count(12);
 
@@ -98,9 +98,13 @@ static void test_supported_startup_and_recovery() {
   CHECK(hub.register_recovery_client(&pwm));
   CHECK(hub.register_recovery_client(&rgb));
 
+  pwm.setup();
+  CHECK(bus.transaction_count() == 0);
+
   bus.expect_read(0x61, protocol::REG_FIRMWARE_VERSION, {protocol::EXPECTED_FIRMWARE_VERSION});
   bus.expect_write(0x61, 0x58, {12, 0});
   bus.expect_write(0x61, 0x5B, {255});
+  bus.expect_write(0x61, 0x41, {0});
   hub.setup();
   CHECK(hub.get_hub_state() == HubState::READY);
   CHECK(hub.is_hub_ready());
@@ -112,7 +116,7 @@ static void test_supported_startup_and_recovery() {
   CHECK(hub.write_servo_detach({1, 0}));
 
   bus.expect_write(0x61, 0x43, {128});
-  pwm.test_write_state(0.5f);
+  pwm.set_level(0.5f);
   light::LightState first_color(1.0f, 0.5f, 0.0f);
   bus.expect_write(0x61, 0x5A, {0, 0, 12, 0, 255, 128, 0});
   rgb.write_state(&first_color);
@@ -135,7 +139,7 @@ static void test_supported_startup_and_recovery() {
   CHECK(adc_value == 0xCAFE);
   CHECK(bus.transaction_count() == transactions_before_suppressed_read);
 
-  pwm.test_write_state(0.25f);
+  pwm.set_level(0.25f);
   light::LightState recovered_color(0.0f, 0.25f, 1.0f);
   rgb.write_state(&recovered_color);
   CHECK(bus.transaction_count() == transactions_before_suppressed_read);
@@ -153,7 +157,7 @@ static void test_supported_startup_and_recovery() {
   CHECK(!hub.test_has_timeout("firmware_probe"));
 
   const size_t transactions_before_cached_outputs = bus.transaction_count();
-  pwm.test_write_state(0.25f);
+  pwm.set_level(0.25f);
   rgb.write_state(&recovered_color);
   CHECK(bus.transaction_count() == transactions_before_cached_outputs);
   CHECK(bus.empty());

@@ -51,7 +51,7 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
 
   bool read_digital(protocol::Endpoint endpoint, bool &value);
   bool write_digital(protocol::Endpoint endpoint, bool value);
-  bool read_adc(uint8_t channel, uint16_t &value);
+  bool read_adc(uint8_t slot, uint16_t &value);
   bool write_pwm(protocol::Endpoint endpoint, uint8_t duty);
   bool write_servo_pulse(protocol::Endpoint endpoint, uint16_t pulse_us);
   bool write_servo_detach(protocol::Endpoint endpoint);
@@ -119,9 +119,14 @@ class PbHubBinarySensor : public binary_sensor::BinarySensor, public PollingComp
 #endif
 
 #ifdef USE_OUTPUT
-class PbHubPWMPin : public output::FloatOutput, public PbHubRecoveryClient {
+class PbHubPWMOutput final : public output::FloatOutput, public Component, public PbHubRecoveryClient {
  public:
-  PbHubPWMPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+  PbHubPWMOutput(PbHubComponent *parent, uint8_t pin);
+
+  void setup() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return PbHubComponent::SETUP_PRIORITY + 1.0f; }
+  void update_frequency(float frequency) override;
 
   void invalidate_applied_state() override { this->applied_known_ = false; }
   bool restore_configuration() override { return true; }
@@ -132,11 +137,16 @@ class PbHubPWMPin : public output::FloatOutput, public PbHubRecoveryClient {
   bool apply_desired_state_();
 
   PbHubComponent *parent_;
-  uint8_t pin_;
+  protocol::Endpoint endpoint_{};
   uint8_t desired_duty_{0};
   uint8_t applied_duty_{0};
+  protocol::PwmDriveMode desired_mode_{protocol::PwmDriveMode::DIGITAL_LOW};
+  protocol::PwmDriveMode applied_mode_{protocol::PwmDriveMode::DIGITAL_LOW};
+  bool endpoint_valid_{false};
   bool desired_known_{false};
   bool applied_known_{false};
+  bool invalid_level_warning_logged_{false};
+  bool frequency_warning_logged_{false};
 };
 #endif
 
@@ -147,6 +157,7 @@ class PbHubADC : public sensor::Sensor, public PollingComponent, public PbHubPol
 
   void update() override;
   void perform_poll() override;
+  void dump_config() override;
 
  protected:
   PbHubComponent *parent_;

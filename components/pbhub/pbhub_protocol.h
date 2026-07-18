@@ -10,6 +10,7 @@ inline constexpr uint8_t CHANNEL_COUNT = 6;
 inline constexpr uint8_t ENDPOINT_COUNT = 12;
 inline constexpr uint16_t MAX_LED_COUNT = 74;
 inline constexpr uint8_t EXPECTED_FIRMWARE_VERSION = 2;
+inline constexpr float NOMINAL_PWM_FREQUENCY_HZ = 1'000'000.0f / 2550.0f;
 inline constexpr uint8_t REG_LED_TIMING = 0xFA;
 inline constexpr uint8_t REG_FIRMWARE_VERSION = 0xFE;
 
@@ -48,6 +49,12 @@ enum class ChannelOperation : uint8_t {
   LED_COUNT = 0x08,
   LED_FILL = 0x0A,
   LED_BRIGHTNESS = 0x0B,
+};
+
+enum class PwmDriveMode : uint8_t {
+  DIGITAL_LOW,
+  PWM,
+  DIGITAL_HIGH,
 };
 
 constexpr bool is_valid_channel(uint8_t channel) { return channel < CHANNEL_COUNT; }
@@ -129,9 +136,18 @@ constexpr bool make_digital_write(Endpoint endpoint, bool state, WriteCommand<1>
   return true;
 }
 
+constexpr PwmDriveMode pwm_drive_mode(uint8_t duty) {
+  if (duty == 0)
+    return PwmDriveMode::DIGITAL_LOW;
+  if (duty == 255)
+    return PwmDriveMode::DIGITAL_HIGH;
+  return PwmDriveMode::PWM;
+}
+
 constexpr bool make_pwm_write(Endpoint endpoint, uint8_t duty, WriteCommand<1> &out) {
-  if (duty == 0 || duty == 255)
-    return make_digital_write(endpoint, duty == 255, out);
+  const auto mode = pwm_drive_mode(duty);
+  if (mode != PwmDriveMode::PWM)
+    return make_digital_write(endpoint, mode == PwmDriveMode::DIGITAL_HIGH, out);
 
   uint8_t reg{};
   if (!endpoint_register(endpoint, EndpointOperation::PWM, reg))

@@ -325,13 +325,13 @@ bool PbHubComponent::write_digital(protocol::Endpoint endpoint, bool value) {
   return this->write_command_("digital write", command);
 }
 
-bool PbHubComponent::read_adc(uint8_t channel, uint16_t &value) {
+bool PbHubComponent::read_adc(uint8_t slot, uint16_t &value) {
   protocol::ReadCommand command{};
-  if (!protocol::make_adc_read(channel, command)) {
-    ESP_LOGE(TAG, "Rejected invalid PBHUB ADC channel %u", channel);
+  if (!protocol::make_adc_read(slot, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB ADC slot %u", slot);
     return false;
   }
-  if (!this->endpoint_owned_by_({channel, 0}, EndpointOwner::ADC, "ADC read") || !this->feature_io_allowed_())
+  if (!this->endpoint_owned_by_({slot, 0}, EndpointOwner::ADC, "ADC read") || !this->feature_io_allowed_())
     return false;
 
   std::array<uint8_t, 2> response{};
@@ -439,25 +439,61 @@ void PbHubBinarySensor::dump_config() {
 #endif
 
 #ifdef USE_OUTPUT
-void PbHubPWMPin::write_state(float state) {
+PbHubPWMOutput::PbHubPWMOutput(PbHubComponent *parent, uint8_t pin)
+    : parent_(parent), endpoint_valid_(protocol::decode_endpoint(pin, this->endpoint_)) {}
+
+void PbHubPWMOutput::setup() {
+  if (!this->desired_known_)
+    this->set_level(0.0f);
+}
+
+void PbHubPWMOutput::dump_config() {
+  ESP_LOGCONFIG(TAG, "PBHUB PWM Output:");
+  if (this->endpoint_valid_)
+    ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->endpoint_.channel * 10U + this->endpoint_.index);
+  else
+    ESP_LOGCONFIG(TAG, "  Endpoint: invalid");
+  ESP_LOGCONFIG(TAG, "  PWM Frequency: nominal %.2f Hz (fixed by firmware)", protocol::NOMINAL_PWM_FREQUENCY_HZ);
+  LOG_FLOAT_OUTPUT(this);
+}
+
+void PbHubPWMOutput::update_frequency(float frequency) {
+  if (this->frequency_warning_logged_)
+    return;
+  this->frequency_warning_logged_ = true;
+  ESP_LOGW(TAG, "PBHUB PWM frequency is fixed at nominal %.2f Hz; requested %.2f Hz was ignored",
+           protocol::NOMINAL_PWM_FREQUENCY_HZ, frequency);
+}
+
+void PbHubPWMOutput::write_state(float state) {
   if (this->parent_ == nullptr)
     return;
-  const float clamped = std::max(0.0f, std::min(1.0f, state));
+  if (!std::isfinite(state)) {
+    if (!this->invalid_level_warning_logged_) {
+      ESP_LOGW(TAG, "Ignored non-finite PBHUB PWM level");
+      this->invalid_level_warning_logged_ = true;
+    }
+    return;
+  }
+
+  const float clamped = std::clamp(state, 0.0f, 1.0f);
   this->desired_duty_ = static_cast<uint8_t>(std::lround(clamped * 255.0f));
+  this->desired_mode_ = protocol::pwm_drive_mode(this->desired_duty_);
   this->desired_known_ = true;
   if (this->parent_->is_hub_ready())
     this->apply_desired_state_();
 }
 
-bool PbHubPWMPin::replay_state() { return !this->desired_known_ || this->apply_desired_state_(); }
+bool PbHubPWMOutput::replay_state() { return !this->desired_known_ || this->apply_desired_state_(); }
 
-bool PbHubPWMPin::apply_desired_state_() {
-  if (this->applied_known_ && this->applied_duty_ == this->desired_duty_)
+bool PbHubPWMOutput::apply_desired_state_() {
+  if (this->applied_known_ && this->applied_duty_ == this->desired_duty_ &&
+      this->applied_mode_ == this->desired_mode_)
     return true;
-  protocol::Endpoint endpoint{};
-  if (!protocol::decode_endpoint(this->pin_, endpoint) || !this->parent_->write_pwm(endpoint, this->desired_duty_))
+  if (!this->endpoint_valid_ || !this->parent_->write_pwm(this->endpoint_, this->desired_duty_))
     return false;
   this->applied_duty_ = this->desired_duty_;
+  this->applied_mode_ = this->desired_mode_;
   this->applied_known_ = true;
   return true;
 }
@@ -478,6 +514,12 @@ void PbHubADC::perform_poll() {
   uint16_t value;
   if (this->parent_->read_adc(this->slot_, value))
     this->publish_state(value);
+}
+
+void PbHubADC::dump_config() {
+  LOG_SENSOR("", "PBHUB ADC", this);
+  ESP_LOGCONFIG(TAG, "  Slot: %u (signal A)", this->slot_);
+  LOG_UPDATE_INTERVAL(this);
 }
 #endif
 

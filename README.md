@@ -13,11 +13,12 @@ The datasheet records the behavior of M5Stack's STM32 firmware, including known
 protocol limitations and source-confirmed defects.
 
 > **v2 branch status:** the clean ESPHome 2026.7 implementation is in progress.
-> Core transport and native digital entities have been replaced; later entity
-> phases and the public usage rewrite are not complete. The guide below documents
-> the main/v1 component and is not the v2 API. Until Phase 7, the implementation
-> plan records the target and status, while validated fixtures are authoritative
-> for the currently implemented v2 surface.
+> Core transport, native digital entities, raw ADC and fixed-frequency PWM have
+> been replaced; later entity phases and the public usage rewrite are not
+> complete. The guide below documents the main/v1 component and is not the v2
+> API. Until Phase 7, the implementation plan records the target and status,
+> while validated fixtures are authoritative for the currently implemented v2
+> surface.
 
 ---
 
@@ -29,9 +30,14 @@ This ESPHome component adds support for the [M5Stack PBHUB / PortHub](https://do
 
 -   Digital GPIO (per-slot A/B pins, read/write)
 -   Analog input (ADC)
--   PWM output (LED, motors, buzzer, servo control)
+-   Fixed-frequency PWM output (nominally about 392.16 Hz)
 -   RGB LED support
 -   Compatible with direct I2C or I2C multiplexers (e.g., PCA9548)
+
+Stock firmware does not support variable PWM frequency, so PBHUB PWM cannot be
+used for RTTTL. Its fixed PWM generator is also not the firmware's separate 50 Hz
+servo generator; direct servo support requires the dedicated v2 servo mode
+planned for the next phase.
 
 ---
 
@@ -130,7 +136,11 @@ sensor:
 
 ### 3. PWM Output
 
-Use the custom PBHUB PWM platform to control LEDs, motors, buzzers, or servos attached to PBHUB pins. See [Understanding PBHUB Pin Numbers](#understanding-pbhub-pin-numbers) for pin numbering details.
+Use the custom PBHUB PWM platform for duty control, such as LED brightness or an
+external motor driver. Its frequency is fixed by the PBHUB firmware at a nominal
+392.16 Hz. It cannot play RTTTL notes and must not be used as an ESPHome servo
+output. See [Understanding PBHUB Pin Numbers](#understanding-pbhub-pin-numbers)
+for pin numbering details.
 
 #### LED PWM Output
 
@@ -162,38 +172,6 @@ fan:
     - platform: speed
       output: pwm_motor
       name: 'PWM Fan'
-```
-
-#### Buzzer PWM Output
-
-```yaml
-output:
-    - platform: pbhub_pwm
-      pin:
-          pbhub: pb_hub
-          number: 35
-      id: pwm_buzzer
-
-rtttl:
-    output: pwm_buzzer
-    name: 'Buzzer RTTTL'
-```
-
-#### Servo Control
-
-```yaml
-output:
-    - platform: pbhub_pwm
-      pin:
-          pbhub: pb_hub
-          number: 36
-      id: pwm_servo
-
-servo:
-    - output: pwm_servo
-      id: servo_1
-      min_pulse_width: 500us
-      max_pulse_width: 2500us
 ```
 
 ### 4. RGB LED

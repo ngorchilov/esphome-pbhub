@@ -21,6 +21,8 @@ template<size_t N> bool unchanged(const WriteCommand<N> &command, uint8_t reg, c
 }
 
 int main() {
+  constexpr std::array<uint8_t, 5> PWM_DUTIES{{0, 1, 127, 254, 255}};
+
   for (uint16_t encoded = 0; encoded <= 255; encoded++) {
     Endpoint endpoint{0xEE, 0xEE};
     const bool expected = encoded <= 51 && encoded / 10 <= 5 && encoded % 10 <= 1;
@@ -54,10 +56,13 @@ int main() {
       CHECK(digital.reg == CHANNEL_BASES[channel] + index);
       CHECK(digital.payload == std::array<uint8_t, 1>{{1}});
 
-      WriteCommand<1> pwm{};
-      CHECK(make_pwm_write(endpoint, 127, pwm));
-      CHECK(pwm.reg == CHANNEL_BASES[channel] + 0x02 + index);
-      CHECK(pwm.payload == std::array<uint8_t, 1>{{127}});
+      for (const uint8_t duty : PWM_DUTIES) {
+        WriteCommand<1> pwm{};
+        CHECK(make_pwm_write(endpoint, duty, pwm));
+        const bool digital_extreme = duty == 0 || duty == 255;
+        CHECK(pwm.reg == CHANNEL_BASES[channel] + (digital_extreme ? 0x00 : 0x02) + index);
+        CHECK(pwm.payload == std::array<uint8_t, 1>{{duty == 255 ? uint8_t{1} : duty}});
+      }
 
       WriteCommand<2> servo{};
       CHECK(make_servo_pulse_write(endpoint, 1500, servo));
@@ -101,6 +106,11 @@ int main() {
   CHECK(is_supported_firmware(2));
   CHECK(!is_supported_firmware(1));
   CHECK(!is_supported_firmware(3));
+  CHECK(NOMINAL_PWM_FREQUENCY_HZ > 392.15f && NOMINAL_PWM_FREQUENCY_HZ < 392.17f);
+  CHECK(pwm_drive_mode(0) == PwmDriveMode::DIGITAL_LOW);
+  CHECK(pwm_drive_mode(1) == PwmDriveMode::PWM);
+  CHECK(pwm_drive_mode(254) == PwmDriveMode::PWM);
+  CHECK(pwm_drive_mode(255) == PwmDriveMode::DIGITAL_HIGH);
 
   const Endpoint endpoint{2, 1};
   WriteCommand<1> pwm{};

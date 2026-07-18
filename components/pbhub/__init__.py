@@ -6,6 +6,7 @@ from esphome.const import (
     CONF_ID,
     CONF_MODE,
     CONF_NUM_LEDS,
+    CONF_OUTPUT,
     CONF_OUTPUT_ID,
     CONF_PIN,
     CONF_PLATFORM,
@@ -167,12 +168,47 @@ def _collect_endpoint_claims(full_config):
     )
 
 
+def _pbhub_output_modes(full_config):
+    return {
+        str(entry[CONF_ID]): entry[CONF_MODE]
+        for entry in full_config.get("output", [])
+        if entry.get(CONF_PLATFORM) == "pbhub"
+    }
+
+
+def _reject_unsupported_output_consumers(full_config):
+    output_modes = _pbhub_output_modes(full_config)
+    if not output_modes:
+        return
+
+    for index, entry in enumerate(full_config.get("rtttl", [])):
+        output_id = str(entry.get(CONF_OUTPUT))
+        if output_id in output_modes:
+            raise cv.FinalExternalInvalid(
+                f"PBHUB output '{output_id}' cannot be used by RTTTL: stock "
+                "firmware does not support dynamic PWM frequency",
+                path=[cv.ROOT_CONFIG_PATH, "rtttl", index, CONF_OUTPUT],
+            )
+
+    for index, entry in enumerate(full_config.get("servo", [])):
+        output_id = str(entry.get(CONF_OUTPUT))
+        mode = output_modes.get(output_id)
+        if mode is not None and mode != OUTPUT_MODE_SERVO:
+            raise cv.FinalExternalInvalid(
+                f"PBHUB output '{output_id}' in mode '{mode}' cannot be used "
+                "by ESPHome servo: fixed-frequency PWM is not the firmware's "
+                "50 Hz servo generator",
+                path=[cv.ROOT_CONFIG_PATH, "servo", index, CONF_OUTPUT],
+            )
+
+
 def _final_validate(config):
     full_config = fv.full_config.get()
-    data_key = "pbhub.endpoint_claims_validated"
+    data_key = "pbhub.final_validation_complete"
     if full_config.data.get(data_key):
         return config
-    full_config.data[data_key] = True
+
+    _reject_unsupported_output_consumers(full_config)
 
     claimed = {}
     for claim in _collect_endpoint_claims(full_config):
@@ -190,6 +226,7 @@ def _final_validate(config):
             path=[cv.ROOT_CONFIG_PATH, *claim["path"], claim["field"]],
         )
 
+    full_config.data[data_key] = True
     return config
 
 

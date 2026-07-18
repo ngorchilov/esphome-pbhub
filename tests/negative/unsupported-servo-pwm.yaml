@@ -1,0 +1,20 @@
+esphome:
+  name: pbhub-unsupported-servo-pwm
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: fixed_pwm
+    pbhub_id: test_hub
+    pin: 0
+    mode: pwm
+
+servo:
+  - id: invalid_servo
+    output: fixed_pwm
