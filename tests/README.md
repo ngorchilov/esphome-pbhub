@@ -49,9 +49,10 @@ physical-position feedback.
 Phase 7 makes classic ESP32 with ESP-IDF the detailed behavior target and adds a
 small explicit parity matrix for framework-sensitive firmware compilation.
 
-- Classic ESP32 with ESP-IDF is the primary configuration, code-generation,
-  detailed compile and real-hardware target. Detailed positive/negative schema,
-  generated-contract and logical fixtures run once on ESP-IDF.
+- Classic ESP32 with ESP-IDF is the primary configuration, code-generation and
+  detailed compile target, and the planned Phase 9 real-hardware target.
+  Detailed positive/negative schema, generated-contract and controller firmware
+  fixtures run once on ESP-IDF; strict host C++ tests remain framework-neutral.
 - Two shared scenarios compile under both ESP-IDF and Arduino: a core-only
   configuration and a full-surface configuration exercising every PBHUB entity
   domain and feature guard, including PWM and servo code generation.
@@ -61,8 +62,32 @@ small explicit parity matrix for framework-sensitive firmware compilation.
   devices pre-addressed outside this component; the component does not mutate
   device addresses.
 - The runner verifies the resolved framework through the generated compiler
-  definitions after each of the eleven firmware builds: nine ESP-IDF behavior
-  fixtures and two Arduino parity fixtures.
-- Arduino is a compile-only compatibility target. Hardware validation remains
-  ESP-IDF-only unless Arduino runtime support is separately approved and tested.
+  definitions after each of the eleven ESPHome controller builds: nine ESP-IDF
+  behavior fixtures and two Arduino parity fixtures.
+- Arduino is a compile-only compatibility target. Planned Phase 9 hardware
+  validation uses ESP-IDF unless Arduino runtime support is separately approved
+  and tested.
 - ESP8266 and ESP32-S3 are outside the v2 validation and support boundary.
+
+## Public documentation provenance
+
+The README's published v2 shapes are drawn from these already validated Phase 7
+fixtures:
+
+| Public surface | Fixture authority |
+|---|---|
+| Minimal direct-bus hub | `common/esp32-idf.yaml`, `common/pbhub-core-only.yaml`, compiled by `positive/hub-only.yaml` |
+| Conflict-free all-entity example | Composite of `common/esp32-idf.yaml` and the feature-hub portion of `common/pbhub-full-topology.yaml` |
+| Digital input and output | `positive/digital-entities.yaml` |
+| Raw ADC | `positive/adc-slots.yaml` |
+| Fixed PWM | `positive/pwm-contract.yaml` |
+| Direct servo | `positive/servo-contract.yaml` |
+| Uniform RGB | `positive/rgb-bounds.yaml` |
+| Exact endpoints and conflicts | `positive/all-endpoints.yaml`, `positive/ownership.yaml` and matching negative fixtures |
+| Two buses, same-bus addresses and TCA9548A channels | `common/esp32-idf-topology.yaml` and `common/pbhub-full-topology.yaml`, compiled by `positive/multi-hub.yaml` and `framework/arduino-topologies.yaml` |
+
+The public installation block replaces the fixtures' repository-local external
+component source with `github://ngorchilov/esphome-pbhub@v2`. Publication also
+renames test IDs, adds friendly entity names and omits optional transform fields
+that exist only to widen fixture coverage. These transformations do not change
+the PBHUB schemas or generated component paths exercised by the fixtures above.

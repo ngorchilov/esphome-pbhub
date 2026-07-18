@@ -22,8 +22,8 @@ boundary for each commit.
 6. Target the audited stock PBHUB application protocol reporting firmware
    version 2.
 7. Target the public APIs of ESPHome 2026.7.0 on classic ESP32, with ESP-IDF as
-   the primary validation and runtime framework and Arduino as a compile-only
-   compatibility target.
+   the primary configuration/code-generation/build target and planned Phase 9
+   runtime framework, and Arduino as a compile-only compatibility target.
 8. Publish only portable product and implementation documentation. Exclude
    machine-local paths, deployment identifiers and workflow history.
 
@@ -44,12 +44,12 @@ boundary for each commit.
 
 | Area | v2 decision | Reason |
 |---|---|---|
-| Endpoint model | Exact channel/index type; valid external numbers are only `0,1,10,11,...,50,51` | The register banks are non-contiguous and invalid values currently fall back to channel 0 |
+| Endpoint model | Exact channel/index type; valid external numbers are only `0,1,10,11,...,50,51` | The register banks are non-contiguous and the prototype fell back to channel 0 for invalid values |
 | Digital input | Native polling `binary_sensor` | A boolean GPIOPin API cannot report I2C failure and generic GPIO polling is excessively frequent |
 | Digital output | Native `switch` only | The clean v2 API does not retain the old GPIOPin abstraction |
 | ADC | Native raw sensor configured by `slot: 0..5` | ADC exists only on signal A, not on an arbitrary endpoint |
 | PWM | `output` mode with fixed frequency near 392 Hz; use digital low/high for encoded duties 0/255 | Firmware version 2 has no frequency control, and its PWM extrema have edge-state defects |
-| Servo | Separate `output` mode using the direct pulse register | Application firmware version 2 has a genuine 50 Hz servo generator; ordinary PWM is not equivalent |
+| Servo | Separate `output` mode using the direct pulse register | Application firmware version 2 has a separate, source-derived nominal 50 Hz servo generator; ordinary PWM is not equivalent |
 | RGB | One uniform RGB light per configured channel/strip | Every indexed command immediately transmits a strip prefix, making addressable effects inefficient |
 | RGB brightness | Scale on the ESP host; keep STM32 brightness at 255 | Firmware brightness is nonlinear and applies one color write late |
 | Endpoint conflicts | Reject duplicate ownership | Firmware commands silently replace the current mode of a physical signal |
@@ -60,140 +60,142 @@ boundary for each commit.
 | Reported output state | Switch publishes after successful transport; light reports ESPHome desired state | ESPHome light state is published before `LightOutput::write_state()`, and firmware has no physical feedback |
 | Recovery | Invalidate verification and applied-state caches after transport loss; rate-limit re-probe and replay | Only the I2C address persists across a hub reset |
 
-## Current implementation gap analysis
+## Historical prototype gap analysis
 
-The present component is a useful prototype, but these issues must be resolved
-before it can be called solid.
+The pre-v2 component was a useful prototype. The implementation phases below
+closed these gaps; they are retained here as design rationale.
 
-### 1. Endpoint validation accepts impossible pins
+### 1. Endpoint validation accepted impossible pins
 
-Python schemas generally accept every integer from 0 through 51. Values such as
-2, 9, 22 and 49 do not represent a physical PBHUB signal. C++ register helpers
-also map an invalid channel back to channel 0. A typo can therefore control the
-wrong output instead of failing configuration.
+Python schemas generally accepted every integer from 0 through 51. Values such
+as 2, 9, 22 and 49 did not represent a physical PBHUB signal. C++ register
+helpers also mapped an invalid channel back to channel 0. A typo could therefore
+control the wrong output instead of failing configuration.
 
-v2 action: one shared validator must accept only the twelve exact endpoint values,
-and no C++ helper may have a channel-0 fallback.
+v2 resolution: one shared validator accepts only the twelve exact endpoint
+values, and no C++ helper has a channel-0 fallback.
 
-### 2. ADC configuration and C++ interpretation disagree
+### 2. ADC configuration and C++ interpretation disagreed
 
-The current sensor schema accepts a pin-shaped number, while the C++ sensor passes
-that number as a channel. A value such as 32 is not channel 3; it becomes an
-invalid channel and currently falls back to channel 0.
+The sensor schema accepted a pin-shaped number, while the C++ sensor passed that
+number as a channel. A value such as 32 was not channel 3; it became an invalid
+channel and fell back to channel 0.
 
-v2 action: ADC uses `slot: 0..5`. Signal A is implicit because `B+0x6` is the only
-implemented ADC register.
+v2 resolution: ADC uses `slot: 0..5`. Signal A is implicit because `B+0x6` is the
+only implemented ADC register.
 
-### 3. RGB configuration is not implemented as advertised
+### 3. RGB configuration was not implemented as advertised
 
-The light schema accepts `slot` values through 51 even though the C++ code expects
-0 through 5. `led_count` changes an internal flag but the light never programs the
-count or uses a range fill. Each update writes only LED 0. It writes color before
-brightness, while firmware brightness affects only subsequent color writes.
+The light schema accepted `slot` values through 51 even though the C++ code
+expected 0 through 5. `led_count` changed an internal flag but the light never
+programmed the count or used a range fill. Each update wrote only LED 0. It wrote
+color before brightness, while firmware brightness affected only subsequent
+color writes.
 
-v2 action: validate slot and count, initialize count once, force firmware
-brightness 255, host-scale color and use one bounded fill for all configured LEDs.
+v2 resolution: slot and count are validated, firmware brightness is fixed at
+255, color is host-scaled and one bounded fill covers all configured LEDs.
 
-### 4. Communication failure is converted into valid state
+### 4. Communication failure was converted into valid state
 
-Digital read returns `false` on I2C error and ADC returns zero. An inverted input
-can turn a failed read into `true`, and a real ADC zero cannot be distinguished
-from disconnection.
+Digital read returned `false` on I2C error and ADC returned zero. An inverted
+input could turn a failed read into `true`, and a real ADC zero could not be
+distinguished from disconnection.
 
-v2 action: transport methods return success separately from an output value.
+v2 resolution: transport methods return success separately from an output value.
 Sensors preserve their last value on failure and the parent component reports a
 warning state.
 
-This fixes host-detected transport failures only. A firmware ADC timeout can
+This separation covers host-detected transport failures only. A firmware ADC timeout can
 leave a stale but valid prior response in the TX buffer while the I2C transaction
 succeeds. Application firmware version 2 provides no sequence number or status
-bit with which the host could prove sample freshness; v2 must document that
-irreducible limitation.
+bit with which the host could prove sample freshness; the public reference
+documents that irreducible limitation.
 
-### 5. Write failures are logged but not reflected in entities
+### 5. Write failures were logged but not reflected in entities
 
-Most write methods ignore the result after logging it. Switch/light/output state
-can appear updated even when the command was not transported successfully.
+Most write methods ignored the result after logging it. Switch/light/output state
+could appear updated even when the command was not transported successfully.
 Conversely, an I2C success still does not prove semantic acceptance or the
 physical output level because firmware v2 has no such acknowledgement.
 
-v2 action: centralize result handling and keep desired state separate from the
-last successfully transported command. Publish switch state only after transport
-success. ESPHome's light entity necessarily remains desired logical state because
-it publishes before `LightOutput::write_state()`; transport failures preserve
-that desired state for replay and surface through parent communication health.
-Neither entity is physical feedback.
+v2 resolution: result handling is centralized and desired state is separate
+from the last successfully transported command. Switch state publishes only
+after transport success. ESPHome's light entity necessarily remains desired
+logical state because it publishes before `LightOutput::write_state()`;
+transport failures preserve that desired state for replay and surface through
+parent communication health. Neither entity is physical feedback.
 
-### 6. Generic GPIO input is the wrong abstraction
+### 6. Generic GPIO input was the wrong abstraction
 
 ESPHome's generic GPIO binary sensor can call a non-interrupt pin's
 `digital_read()` on every main-loop pass. Every call becomes an I2C transaction
 and also reasserts input mode in the STM32 firmware. Several inputs can create
 continuous bus traffic and worsen PWM/servo timing.
 
-v2 action: native PBHUB binary sensors poll at an explicit interval and publish
-only successful samples. Remove the custom GPIOPin adapter entirely; digital
+v2 resolution: native PBHUB binary sensors poll at an explicit interval and
+publish only successful samples. The custom GPIOPin adapter is removed; digital
 outputs use the native PBHUB switch.
 
-### 7. PWM, servo and RTTTL are conflated
+### 7. PWM, servo and RTTTL were conflated
 
-The current output platform always writes the PBHUB PWM duty register. The
-unregistered C++ servo wrapper is not reachable from YAML. Feeding that PWM
-output to ESPHome `servo` does not select the hub's 50 Hz servo mode. Feeding it
-to RTTTL cannot change the firmware's fixed approximately 392 Hz frequency, so
-notes do not follow the melody.
+The output platform always wrote the PBHUB PWM duty register. The unregistered
+C++ servo wrapper was not reachable from YAML. Feeding that PWM output to
+ESPHome `servo` did not select the hub's nominal 50 Hz servo mode. Feeding it to
+RTTTL could not change the firmware's fixed approximately 392 Hz frequency, so
+notes did not follow the melody.
 
-v2 action: make `mode: pwm` and `mode: servo` explicit. Dynamic frequency requests
-must not fail silently. RTTTL remains unsupported on application firmware version
-2 and the README must say so.
+v2 resolution: `mode: pwm` and `mode: servo` are explicit. Dynamic frequency
+requests do not fail silently. RTTTL remains unsupported on application firmware
+version 2.
 
-### 8. No endpoint ownership model exists
+### 8. No endpoint ownership model existed
 
-An ADC sensor, GPIO, PWM output, servo and RGB light can all target the same
+An ADC sensor, GPIO, PWM output, servo and RGB light could all target the same
 physical signal. The firmware lets the most recent command silently change its
 mode, producing intermittent behavior that looks like a transport problem.
 
-v2 action: claim endpoints during validation/code generation and again in C++ as
-a defensive check. A conflict identifies both owners and fails loudly.
+v2 resolution: endpoints are claimed during validation/code generation and
+again in C++ as a defensive check. A conflict identifies both owners and fails
+loudly.
 
-### 9. Feature guards and class layout are fragile
+### 9. Feature guards and class layout were fragile
 
-Output headers are effectively included unconditionally, dummy fallback classes
-exist when a feature is disabled, and some method implementations are outside the
-same feature guards as their declarations. A hub-only configuration can compile
-different code than intended.
+Output headers were effectively included unconditionally, dummy fallback
+classes existed when a feature was disabled, and some method implementations
+were outside the same feature guards as their declarations. A hub-only
+configuration could compile different code than intended.
 
-v2 action: keep the core transport independent and compile entity wrappers only
-under their matching `USE_*` guards. Remove warning directives and dummy feature
-classes.
+v2 resolution: the core transport is independent and entity wrappers compile
+only under their matching `USE_*` guards. Warning directives and dummy feature
+classes are removed.
 
-### 10. Setup and recovery do not establish or restore device state
+### 10. Setup and recovery did not establish or restore device state
 
-Setup currently logs an address but does not verify that the hub responds or
-cache firmware capabilities. Repeated read failures can also flood warnings. A
-hub reset loses every configured mode and value except the I2C address, while
-host-side caches can still make those values look applied.
+Setup logged an address but did not verify that the hub responded or cache
+firmware capabilities. Repeated read failures could also flood warnings. A hub
+reset lost every configured mode and value except the I2C address, while
+host-side caches could still make those values look applied.
 
-v2 action: require a successful application-version read of exactly `2`, report
-a useful component state, count consecutive failures and throttle repeated logs.
-On transport loss, invalidate firmware verification and every applied-state
-cache. After a rate-limited successful re-probe, restore configured global and
-RGB state, then replay desired entity outputs before clearing the warning.
+v2 resolution: setup requires a successful application-version read of exactly
+`2`, reports a useful component state, counts consecutive failures and throttles
+repeated logs. Transport loss invalidates firmware verification and every
+applied-state cache. After a rate-limited successful re-probe, recovery restores
+configured global and RGB state, then replays desired entity outputs before
+clearing the warning.
 
-### 11. Documentation disagrees with the actual component
+### 11. Documentation disagreed with the actual component
 
-The README uses an incorrect default address in examples, names platform values
-that do not match the Python module layout, and presents PWM as suitable for
+The README used an incorrect default address in examples, named platform values
+that did not match the Python module layout, and presented PWM as suitable for
 RTTTL and direct ESPHome servo use.
 
-v2 action: regenerate every example from a fixture that passes the target
-ESPHome configuration validator, then explain the application-firmware-v2 limits
-next to the relevant example.
+v2 resolution: every public shape is traced to a fixture that passed the target
+ESPHome validation/compile matrix, and application-firmware-v2 limits are stated
+next to the relevant feature.
 
-## Planned public YAML API
+## v2 public YAML API
 
-Names below are the design target. They remain subject to configuration and
-compile tests during implementation.
+The names and constraints below are the implemented v2 API.
 
 ### Hub
 
@@ -247,7 +249,7 @@ switch:
     name: Relay
 ```
 
-The default must be safe-off. Restoring any other state is explicit and occurs
+The default logical command must be off. Restoring any other state is explicit and occurs
 only after the hub is available. Published state represents the last
 successfully transported command, not physical output feedback.
 
@@ -592,7 +594,7 @@ Code generation registers every recovery client before ESPHome calls component
 setup. A PBHUB switch uses a priority immediately above the parent's
 `setup_priority::IO`: after the I2C bus but before the parent. Its setup resolves
 the configured restore mode into desired raw state while the parent is still
-`UNVERIFIED`; it performs no I2C transaction. This makes safe-off, or another
+`UNVERIFIED`; it performs no I2C transaction. This makes logical-off, or another
 explicit restore policy, part of the parent's initial verified recovery pass.
 `restore_mode: DISABLED` records no desired state and leaves the switch unknown.
 
@@ -677,7 +679,7 @@ remains.
 
 ### Switch
 
-- Default restore mode is safe-off.
+- Default restore mode sends a logical-off command.
 - Setup resolves the restore policy before the parent performs its initial
   version probe, but records desired state without issuing unverified I2C.
 - `restore_mode: DISABLED` leaves the entity unknown until explicitly commanded.
@@ -874,7 +876,7 @@ Acceptance:
 - Pending reads issue no feature transactions while firmware is unverified or
   recovering and resume after successful recovery.
 - Switch setup records the configured restore state without I2C before the
-  parent's initial probe; safe-off is the default and `DISABLED` remains unknown.
+  parent's initial probe; logical off is the default and `DISABLED` remains unknown.
 - Switch publishes only successfully transported writes and retains a failed
   request as desired state for recovery replay.
 - Detected recovery replays a switch's desired state and publishes it only after
@@ -991,8 +993,9 @@ Acceptance:
 
 Changes:
 
-- Make classic ESP32 with ESP-IDF the canonical configuration, code-generation,
-  detailed compile and runtime-validation target.
+- Make classic ESP32 with ESP-IDF the canonical configuration, code-generation
+  and detailed compile target, and the planned Phase 9 runtime/hardware
+  framework. Keep strict host C++ logic tests framework-neutral.
 - Keep the detailed positive, negative, generated-contract and firmware-compile
   suite on ESP-IDF so framework-dependent code paths are proved once instead of
   multiplying every logical fixture across frameworks. Keep the strict host C++
@@ -1026,7 +1029,7 @@ Acceptance:
 - Arduino compile success is described only as compile compatibility, not as
   runtime or real-hardware support.
 
-### Phase 8 - Documentation and ESPHome 2026.7.0 validation
+### Phase 8 - Documentation and v2 public reference
 
 Changes:
 
@@ -1038,15 +1041,19 @@ Changes:
   devices because v2 deliberately exposes no runtime address mutation.
 - Publish only the framework, target and topology support demonstrated by Phase
   7 under ESPHome 2026.7.0.
+- Trace each public example to the already validated Phase 7 fixture from which
+  it is drawn. Because this phase changes documentation only, reuse the Phase 7
+  compile evidence instead of rerunning the complete matrix without a software
+  or fixture change.
 
 Acceptance:
 
-- Every public example is a validated ESP-IDF fixture or is generated from one;
-  examples intended as framework-neutral also compile under every framework
-  claimed for that example.
+- Every public example names the validated ESP-IDF fixture from which it is
+  drawn; topology examples also name the paired fixture compiled under both
+  frameworks.
 - No README platform names or addresses disagree with the schemas.
-- Every applicable example configures and compiles under the Phase 7 matrix with
-  ESPHome 2026.7.0, without implying Arduino runtime validation.
+- Every claimed example path is covered by the existing Phase 7 ESPHome 2026.7.0
+  matrix, without implying Arduino runtime validation or new hardware evidence.
 - Privacy scan is clean.
 
 ### Phase 9 - Hardware validation and release
@@ -1080,8 +1087,8 @@ ESPHome release is separate future work and requires an explicit plan update.
 
 ### Frameworks and targets
 
-- Classic ESP32 with ESP-IDF is the canonical configuration, code-generation,
-  detailed compile and real-hardware target.
+- Classic ESP32 with ESP-IDF is the canonical configuration, code-generation
+  and detailed compile target, and the planned Phase 9 real-hardware target.
 - Classic ESP32 with Arduino is a secondary compile-only compatibility target.
 - ESP8266 and ESP32-S3 are outside the v2 validation and support boundary.
 - Detailed positive/negative schema, generated-contract and firmware-fixture
@@ -1092,8 +1099,8 @@ ESPHome release is separate future work and requires an explicit plan update.
   feature guards and supported topologies: direct I2C, two physical buses,
   multiple hubs sharing one bus and TCA9548A virtual channels, including the
   same default PBHUB address on isolated channels.
-- Real-hardware validation uses ESP-IDF only unless Arduino runtime support is
-  separately approved after its own hardware pass.
+- Planned Phase 9 real-hardware validation uses ESP-IDF only unless Arduino
+  runtime support is separately approved after its own hardware pass.
 
 ### Positive fixtures
 
@@ -1235,7 +1242,7 @@ claim unless an Arduino hardware pass is later approved and recorded.
 | Logical output state is mistaken for physical confirmation | Misleading entity state | Document switch as transported command, light as desired state and servo state/`has_reached_target()` as host command progression; retain no false readback claim |
 | Recovery probing or firmware stalls flood the bus | Repeated disruption | Rate-limit probes; test interrupted writes and repeating 500 ms stalls |
 | Hub resets entirely between transactions | Applied state can be lost without detection | Document absent reset counter; validate known-failure replay and output-only reset behavior |
-| Restore mode energizes an output | Physical hazard | Safe-off default and explicit opt-in restoration |
+| Restore mode energizes an output | Physical hazard | Logical-off command default and explicit opt-in restoration |
 | Public docs leak machine-local context | Privacy/repository hygiene failure | Portable examples and automated privacy scan |
 
 ## v2 completion definition

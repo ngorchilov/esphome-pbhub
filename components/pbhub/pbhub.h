@@ -33,7 +33,7 @@ namespace esphome::pbhub {
 class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRecoveryBackend {
  public:
   static constexpr float SETUP_PRIORITY = setup_priority::IO;
-  // Provisional host-side traffic policy. Phase 8 hardware measurements must
+  // Provisional host-side traffic policy. Phase 9 hardware measurements must
   // validate or revise it; the firmware does not define a safe refresh rate.
   static constexpr uint32_t RGB_MIN_REFRESH_INTERVAL_US = 50'000;
 
