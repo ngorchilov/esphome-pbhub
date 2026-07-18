@@ -8,8 +8,12 @@
 
 #include "pbhub_protocol.h"
 #include "pbhub_ownership.h"
+#include "pbhub_polling.h"
 #include "pbhub_recovery.h"
 
+#ifdef USE_BINARY_SENSOR
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#endif
 #ifdef USE_OUTPUT
 #include "esphome/components/output/float_output.h"
 #endif
@@ -19,6 +23,9 @@
 #ifdef USE_LIGHT
 #include "esphome/components/light/light_output.h"
 #endif
+#ifdef USE_SWITCH
+#include "esphome/components/switch/switch.h"
+#endif
 
 namespace esphome::pbhub {
 
@@ -27,6 +34,7 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   static constexpr float SETUP_PRIORITY = setup_priority::IO;
 
   void setup() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return SETUP_PRIORITY; }
 
@@ -37,6 +45,7 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   uint32_t get_total_failures() const { return this->total_failures_; }
 
   bool register_recovery_client(PbHubRecoveryClient *client);
+  bool queue_poll(PbHubPollClient *client);
   bool claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owner, const char *owner_id);
   void set_led_timing_mode(uint8_t mode);
 
@@ -74,6 +83,7 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   bool write_led_timing_mode_(uint8_t mode);
 
   PbHubRecoveryCoordinator recovery_;
+  PbHubPollQueue poll_queue_;
   EndpointClaimRegistry endpoint_claims_;
   bool configuration_error_{false};
   bool recovery_io_active_{false};
@@ -89,6 +99,24 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   bool failure_logged_{false};
   bool recovery_scheduled_{false};
 };
+
+#ifdef USE_BINARY_SENSOR
+class PbHubBinarySensor : public binary_sensor::BinarySensor, public PollingComponent, public PbHubPollClient {
+ public:
+  PbHubBinarySensor(PbHubComponent *parent, uint8_t pin, uint32_t update_interval = 100);
+
+  void update() override;
+  void perform_poll() override;
+  void dump_config() override;
+  void set_inverted(bool inverted) { this->inverted_ = inverted; }
+
+ protected:
+  PbHubComponent *parent_;
+  protocol::Endpoint endpoint_{};
+  bool endpoint_valid_{false};
+  bool inverted_{false};
+};
+#endif
 
 #ifdef USE_OUTPUT
 class PbHubPWMPin : public output::FloatOutput, public PbHubRecoveryClient {
@@ -113,15 +141,48 @@ class PbHubPWMPin : public output::FloatOutput, public PbHubRecoveryClient {
 #endif
 
 #ifdef USE_SENSOR
-class PbHubADC : public sensor::Sensor, public PollingComponent {
+class PbHubADC : public sensor::Sensor, public PollingComponent, public PbHubPollClient {
  public:
   PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval = 1000);
 
   void update() override;
+  void perform_poll() override;
 
  protected:
   PbHubComponent *parent_;
   uint8_t slot_;
+};
+#endif
+
+#ifdef USE_SWITCH
+class PbHubSwitch final : public switch_::Switch, public Component, public PbHubRecoveryClient {
+ public:
+  PbHubSwitch(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+
+  void setup() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return PbHubComponent::SETUP_PRIORITY + 1.0f; }
+
+  void invalidate_applied_state() override {
+    this->applied_known_ = false;
+    this->publish_pending_ = false;
+  }
+  bool restore_configuration() override { return true; }
+  bool replay_state() override;
+  void recovery_complete() override;
+
+ protected:
+  void write_state(bool state) override;
+  bool apply_desired_state_(bool publish_immediately);
+
+  PbHubComponent *parent_;
+  uint8_t pin_;
+  bool desired_raw_{false};
+  bool applied_raw_{false};
+  bool pending_raw_{false};
+  bool desired_known_{false};
+  bool applied_known_{false};
+  bool publish_pending_{false};
 };
 #endif
 

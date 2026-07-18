@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-legacy-gpio-switch
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+switch:
+  - platform: gpio
+    id: legacy_output
+    pin:
+      pbhub: test_hub
+      number: 1

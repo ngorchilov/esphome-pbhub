@@ -79,6 +79,14 @@ void PbHubComponent::setup() {
   this->attempt_recovery_();
 }
 
+void PbHubComponent::loop() {
+  if (!this->is_hub_ready())
+    return;
+  auto *client = this->poll_queue_.pop();
+  if (client != nullptr)
+    client->perform_poll();
+}
+
 void PbHubComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "PBHUB:");
   LOG_I2C_DEVICE(this);
@@ -97,6 +105,13 @@ bool PbHubComponent::register_recovery_client(PbHubRecoveryClient *client) {
     return true;
   ESP_LOGE(TAG, "Rejected invalid or duplicate PBHUB recovery client registration");
   this->configuration_error_ = true;
+  return false;
+}
+
+bool PbHubComponent::queue_poll(PbHubPollClient *client) {
+  if (this->poll_queue_.enqueue(client))
+    return true;
+  ESP_LOGE(TAG, "Rejected invalid or full PBHUB scheduled-read queue");
   return false;
 }
 
@@ -237,6 +252,7 @@ void PbHubComponent::attempt_recovery_() {
     else
       ESP_LOGCONFIG(TAG, "  Firmware protocol version: %u", this->firmware_version_);
     this->ever_ready_ = true;
+    this->recovery_.notify_recovery_complete();
     return;
   }
 
@@ -396,6 +412,32 @@ bool PbHubComponent::fill_leds(uint8_t channel, uint16_t configured_count, uint1
   return this->write_command_("LED fill write", command);
 }
 
+#ifdef USE_BINARY_SENSOR
+PbHubBinarySensor::PbHubBinarySensor(PbHubComponent *parent, uint8_t pin, uint32_t update_interval)
+    : PollingComponent(update_interval),
+      parent_(parent),
+      endpoint_valid_(protocol::decode_endpoint(pin, this->endpoint_)) {}
+
+void PbHubBinarySensor::update() {
+  if (this->parent_ != nullptr)
+    this->parent_->queue_poll(this);
+}
+
+void PbHubBinarySensor::perform_poll() {
+  if (this->parent_ == nullptr || !this->endpoint_valid_)
+    return;
+  bool raw;
+  if (this->parent_->read_digital(this->endpoint_, raw))
+    this->publish_state(raw != this->inverted_);
+}
+
+void PbHubBinarySensor::dump_config() {
+  LOG_BINARY_SENSOR("", "PBHUB Binary Sensor", this);
+  ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->endpoint_.channel * 10U + this->endpoint_.index);
+  LOG_UPDATE_INTERVAL(this);
+}
+#endif
+
 #ifdef USE_OUTPUT
 void PbHubPWMPin::write_state(float state) {
   if (this->parent_ == nullptr)
@@ -426,11 +468,71 @@ PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interva
     : PollingComponent(update_interval), parent_(parent), slot_(slot) {}
 
 void PbHubADC::update() {
+  if (this->parent_ != nullptr)
+    this->parent_->queue_poll(this);
+}
+
+void PbHubADC::perform_poll() {
   if (this->parent_ == nullptr)
     return;
   uint16_t value;
   if (this->parent_->read_adc(this->slot_, value))
     this->publish_state(value);
+}
+#endif
+
+#ifdef USE_SWITCH
+void PbHubSwitch::setup() {
+  const auto initial_state = this->get_initial_state_with_restore_mode();
+  if (!initial_state.has_value())
+    return;
+  if (initial_state.value())
+    this->turn_on();
+  else
+    this->turn_off();
+}
+
+void PbHubSwitch::dump_config() {
+  LOG_SWITCH("", "PBHUB Switch", this);
+  ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->pin_);
+}
+
+void PbHubSwitch::write_state(bool state) {
+  this->desired_raw_ = state;
+  this->desired_known_ = true;
+  if (this->parent_ != nullptr && this->parent_->is_hub_ready())
+    this->apply_desired_state_(true);
+}
+
+bool PbHubSwitch::replay_state() { return !this->desired_known_ || this->apply_desired_state_(false); }
+
+bool PbHubSwitch::apply_desired_state_(bool publish_immediately) {
+  if (this->applied_known_ && this->applied_raw_ == this->desired_raw_)
+    return true;
+
+  protocol::Endpoint endpoint{};
+  if (this->parent_ == nullptr || !protocol::decode_endpoint(this->pin_, endpoint) ||
+      !this->parent_->write_digital(endpoint, this->desired_raw_))
+    return false;
+
+  this->applied_raw_ = this->desired_raw_;
+  this->applied_known_ = true;
+  if (publish_immediately) {
+    this->publish_pending_ = false;
+    this->publish_state(this->applied_raw_);
+  } else {
+    this->pending_raw_ = this->applied_raw_;
+    this->publish_pending_ = true;
+  }
+  return true;
+}
+
+void PbHubSwitch::recovery_complete() {
+  if (!this->publish_pending_)
+    return;
+  const bool state = this->pending_raw_;
+  this->publish_pending_ = false;
+  this->publish_state(state);
 }
 #endif
 

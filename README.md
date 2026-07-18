@@ -10,10 +10,14 @@ Custom ESPHome component for the M5Stack PBHUB / PortHub.
 - [ESPHome PBHUB v2 implementation plan](docs/v2-implementation-plan.md)
 
 The datasheet records the behavior of M5Stack's STM32 firmware, including known
-protocol limitations and source-confirmed defects. The implementation plan is a
-design document; the current component has not yet been replaced by that v2
-implementation. The usage guide below describes the legacy component and includes
-known inaccuracies scheduled for correction during the v2 implementation.
+protocol limitations and source-confirmed defects.
+
+> **v2 branch status:** the clean ESPHome 2026.7 implementation is in progress.
+> Core transport and native digital entities have been replaced; later entity
+> phases and the public usage rewrite are not complete. The guide below documents
+> the main/v1 component and is not the v2 API. Until Phase 7, the implementation
+> plan records the target and status, while validated fixtures are authoritative
+> for the currently implemented v2 surface.
 
 ---
 

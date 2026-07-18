@@ -1,0 +1,19 @@
+esphome:
+  name: pbhub-own-duplicate-binary
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+binary_sensor:
+  - platform: pbhub
+    id: first_input
+    pbhub_id: test_hub
+    pin: 0
+  - platform: pbhub
+    id: second_input
+    pbhub_id: test_hub
+    pin: 0

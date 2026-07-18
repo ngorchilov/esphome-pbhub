@@ -1,0 +1,22 @@
+esphome:
+  name: pbhub-own-rgb-switch
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+light:
+  - platform: pbhub
+    id: rgb_conflict
+    pbhub_id: test_hub
+    slot: 2
+    num_leds: 1
+
+switch:
+  - platform: pbhub
+    id: switch_conflict
+    pbhub_id: test_hub
+    pin: 21

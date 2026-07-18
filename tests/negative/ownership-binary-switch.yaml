@@ -1,0 +1,21 @@
+esphome:
+  name: pbhub-own-binary-switch
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+binary_sensor:
+  - platform: pbhub
+    id: input_conflict
+    pbhub_id: test_hub
+    pin: 30
+
+switch:
+  - platform: pbhub
+    id: switch_conflict
+    pbhub_id: test_hub
+    pin: 30

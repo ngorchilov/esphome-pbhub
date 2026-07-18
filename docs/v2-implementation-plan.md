@@ -343,9 +343,10 @@ clear API take precedence over preserving prototype behavior.
 6. Invalid endpoint values, channel-0 fallback, pseudo-servo through PWM and
    misleading RTTTL behavior fail or remain unsupported without compatibility
    exceptions.
-7. Rewrite and validate the representative deployment directly against the new
-   API without copying its names, identifiers, secrets or paths into this
-   repository.
+7. Treat every existing deployment as a downstream consumer, never as a design
+   input. Only after the v2 API is frozen, adapt a representative deployment as
+   an independent release smoke test without copying its names, identifiers,
+   secrets or paths into this repository.
 8. Publish the final v2 YAML reference and a concise clean-break notice. No
    migration layer or compatibility promise is provided for pre-v2 configs.
 
@@ -375,7 +376,9 @@ Use one canonical `pbhub_id` field for every platform. No aliases are accepted,
 so Python validation and C++ code generation share one representation.
 
 The root component schema should extend the standard I2C device schema once;
-it should not define `address` twice. `MULTI_CONF` remains supported.
+it should not define `address` twice. `MULTI_CONF` remains supported. Do not
+expose ESPHome's generic `setup_priority` escape hatch on the parent: switch
+restore state must be loaded before the parent's initial recovery pass.
 
 ### Ownership validation
 
@@ -411,6 +414,7 @@ components/pbhub/
   switch.py
   pbhub_protocol.h
   pbhub_ownership.h
+  pbhub_polling.h
   pbhub_recovery.h
   pbhub.h
   pbhub.cpp
@@ -422,6 +426,8 @@ components/pbhub/
   endian helpers with no ESPHome entity dependency.
 - `pbhub_ownership.h`: host-testable endpoint ownership registry with no
   ESPHome entity dependency.
+- `pbhub_polling.h`: fixed-capacity, coalescing FIFO for serialized scheduled
+  input and ADC reads, with no ESPHome entity dependency.
 - `pbhub_recovery.h`: host-testable health state machine and recovery-client
   orchestration with no ESPHome entity dependency.
 - `pbhub.h/.cpp`: I2C transport, device health, verified firmware-version state,
@@ -538,16 +544,25 @@ no dependency on ESPHome entity domains. The interface lets the parent:
 
 - invalidate a client's applied-state cache while preserving desired state;
 - restore configuration such as RGB count and firmware brightness; and
-- replay desired output state after all configuration is restored.
+- replay desired output state after all configuration is restored; and
+- notify clients after the parent reaches `READY`, so state publication cannot
+  trigger automations partway through recovery.
 
-Code generation registers every client before ESPHome calls component setup. The
-parent uses `setup_priority::IO`, after the I2C bus and before hardware-facing
-entity setup. During initial setup it probes the version, applies configured
-global timing and runs the client configuration pass. Each entity then records
-its initial desired state and applies it only if the parent is `READY`. If the
-probe or configuration failed, entities retain desired state without issuing
-feature commands and the normal loop-driven recovery sequence performs the first
-application later.
+Code generation registers every recovery client before ESPHome calls component
+setup. A PBHUB switch uses a priority immediately above the parent's
+`setup_priority::IO`: after the I2C bus but before the parent. Its setup resolves
+the configured restore mode into desired raw state while the parent is still
+`UNVERIFIED`; it performs no I2C transaction. This makes safe-off, or another
+explicit restore policy, part of the parent's initial verified recovery pass.
+`restore_mode: DISABLED` records no desired state and leaves the switch unknown.
+
+The parent then probes the firmware version, applies configured global timing,
+runs the client configuration pass and replays all known desired output states.
+It transitions to `READY` only after every replay succeeds. A separate
+recovery-complete notification then publishes successfully transported switch
+state, preventing switch automations from running partway through recovery. If
+the probe, configuration or replay fails, entities retain desired state without
+issuing normal feature commands and the bounded recovery sequence retries later.
 
 The parent writes its optional global LED timing first, runs one configuration
 pass across clients, then one output-state pass. A failure during any pass stops
@@ -572,10 +587,13 @@ The PWM typed operation accepts the encoded duty byte but sends digital low for
 The applied cache includes the effective command mode so transitions between a
 digital extremum and intermediate PWM are never incorrectly skipped.
 
-Scheduled input/ADC reads should be serialized by the parent and, where practical,
-staggered so several equal polling intervals do not create one burst. Start with
-at most one scheduled read per parent loop pass; measure before adding a more
-complex queue. User-triggered output changes remain immediate.
+Binary-sensor and ADC polling intervals enqueue read requests in a parent-owned,
+fixed-capacity FIFO. Duplicate requests from the same entity coalesce while
+pending, and the parent performs at most one scheduled read per loop pass. Queued
+requests remain pending while the hub is unverified or recovering and resume only
+in `READY`. The twelve-entry capacity is sufficient because endpoint ownership
+allows at most one polling entity on each of the twelve physical signals.
+User-triggered output changes remain immediate while the parent is ready.
 
 RGB updates should be coalesced to the final state available in a loop pass and
 rate-limited if effects or rapid transitions generate faster changes than the
@@ -593,21 +611,30 @@ remains.
 ### Binary sensor
 
 - Default polling interval: 100 ms, configurable.
+- A polling deadline queues a request; only the parent performs the I2C read, at
+  most one scheduled input/ADC transaction per loop pass.
 - Read configures the selected signal as a floating input, as required by the
   firmware.
-- Inversion applies only after a successful raw read.
-- Failure preserves the published state.
+- The PBHUB wrapper applies inversion only after a successful raw read; ESPHome
+  2026.7's binary-sensor base does not provide transport-aware inversion.
+- An initial failure leaves state unknown; a later failure preserves the last
+  published state.
 - No internal pull-up/down options are advertised.
 
 ### Switch
 
 - Default restore mode is safe-off.
+- Setup resolves the restore policy before the parent performs its initial
+  version probe, but records desired state without issuing unverified I2C.
+- `restore_mode: DISABLED` leaves the entity unknown until explicitly commanded.
 - ESPHome applies inversion before `write_state(bool)`. Store and replay that
   transport-level boolean, then pass the same value to `publish_state()` after a
   successful write so inversion is not applied twice.
 - A successfully transported write publishes the requested logical state as
   commanded state, not confirmed physical feedback.
 - A failed write leaves state unchanged and marks communication health.
+- Recovery replays the most recent desired raw state and publishes it only after
+  the parent has transitioned back to `READY`.
 - Keep the normal optimistic toggle UI (`assumed_state() == false`); the
   documented entity contract is commanded state even though no physical
   readback exists.
@@ -730,8 +757,9 @@ Acceptance:
   configuration callbacks before output-state callbacks and that a failed
   callback returns to bounded `UNVERIFIED` recovery without normal feature
   traffic.
-- Initial-order tests prove the `setup_priority::IO` parent probes and completes
-  its configuration pass before an entity attempts its initial output state.
+- Initial-order tests prove no feature transaction occurs before firmware
+  verification, configuration restoration precedes output replay and native
+  switches load desired restore state before the parent begins recovery.
 - Core-only and multi-hub fixtures configure and compile.
 
 ### Phase 3 - Native digital entities
@@ -740,18 +768,28 @@ Changes:
 
 - Add native polling binary sensor.
 - Add native digital switch.
-- Validate a representative deployment configuration without tracking it.
+- Add host and YAML validation for the clean native API.
 
 Acceptance:
 
-- Input failure never flips an inverted sensor to true.
-- Polling frequency matches configuration and does not run every main-loop pass.
+- An initial input failure remains unknown, and a later failure never changes the
+  last published state or flips an inverted sensor to true.
+- Polling deadlines enqueue work instead of performing I2C; duplicate requests
+  coalesce and the parent executes at most one scheduled input/ADC read per loop
+  pass while `READY`.
+- Pending reads issue no feature transactions while firmware is unverified or
+  recovering and resume after successful recovery.
+- Switch setup records the configured restore state without I2C before the
+  parent's initial probe; safe-off is the default and `DISABLED` remains unknown.
 - Switch publishes only successfully transported writes and retains a failed
   request as desired state for recovery replay.
-- Detected recovery replays a switch's desired state before publishing it.
+- Detected recovery replays a switch's desired state and publishes it only after
+  the parent returns to `READY`.
 - Normal and inverted switches transport/replay the correct raw boolean and
   publish the correct logical state without double inversion.
 - Duplicate digital ownership fails configuration.
+- The former generic-GPIO binary-sensor and switch pin shapes fail validation;
+  no GPIOPin adapter or legacy alias is present.
 
 ### Phase 4 - ADC and fixed PWM
 
@@ -866,7 +904,8 @@ ESPHome release is separate future work and requires an explicit plan update.
 ### Positive fixtures
 
 - Hub only.
-- Native digital input and switch.
+- Native digital input and switch across all twelve endpoints, including
+  inversion, polling intervals and restore modes.
 - All twelve valid endpoints.
 - ADC on all six slots.
 - PWM mode.
@@ -881,8 +920,10 @@ ESPHome release is separate future work and requires an explicit plan update.
 - RGB counts 0 and 75.
 - Unknown output and LED timing modes.
 - ADC configured with an endpoint instead of a slot.
+- Invalid native binary-sensor and switch endpoints.
 - Servo inversion, non-neutral power scaling and `zero_means_zero: false`.
-- Two features claiming the same endpoint.
+- Duplicate binary sensors, duplicate switches and cross-domain features
+  claiming the same endpoint.
 
 ### Checks
 

@@ -1,0 +1,80 @@
+esphome:
+  name: pbhub-phase3-digital
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+binary_sensor:
+  - platform: pbhub
+    id: input_0
+    pbhub_id: test_hub
+    pin: 0
+    update_interval: 50ms
+  - platform: pbhub
+    id: input_10
+    pbhub_id: test_hub
+    pin: 10
+    update_interval: 100ms
+    inverted: true
+  - platform: pbhub
+    id: input_20
+    pbhub_id: test_hub
+    pin: 20
+    update_interval: 150ms
+    filters:
+      - delayed_off: 25ms
+  - platform: pbhub
+    id: input_30
+    pbhub_id: test_hub
+    pin: 30
+    update_interval: 200ms
+    inverted: true
+  - platform: pbhub
+    id: input_40
+    pbhub_id: test_hub
+    pin: 40
+    update_interval: 250ms
+  - platform: pbhub
+    id: input_50
+    pbhub_id: test_hub
+    pin: 50
+    update_interval: 300ms
+    inverted: true
+
+switch:
+  - platform: pbhub
+    id: switch_1
+    pbhub_id: test_hub
+    pin: 1
+  - platform: pbhub
+    id: switch_11
+    pbhub_id: test_hub
+    pin: 11
+    inverted: true
+    restore_mode: ALWAYS_OFF
+  - platform: pbhub
+    id: switch_21
+    pbhub_id: test_hub
+    pin: 21
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: pbhub
+    id: switch_31
+    pbhub_id: test_hub
+    pin: 31
+    inverted: true
+    restore_mode: ALWAYS_OFF
+  - platform: pbhub
+    id: switch_41
+    pbhub_id: test_hub
+    pin: 41
+    restore_mode: ALWAYS_OFF
+  - platform: pbhub
+    id: switch_51
+    pbhub_id: test_hub
+    pin: 51
+    inverted: true
+    restore_mode: DISABLED

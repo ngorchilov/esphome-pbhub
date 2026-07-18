@@ -57,6 +57,13 @@ struct FakeClient : PbHubRecoveryClient {
     return this->replay_result;
   }
 
+  void recovery_complete() override {
+    this->events.push_back("complete " + this->name);
+    this->completions++;
+    if (this->transport_failure_during_completion && this->coordinator != nullptr)
+      this->coordinator->transport_failed();
+  }
+
   std::string name;
   std::vector<std::string> &events;
   bool configuration_result{true};
@@ -64,7 +71,9 @@ struct FakeClient : PbHubRecoveryClient {
   PbHubRecoveryCoordinator *coordinator{nullptr};
   bool transport_failure_during_configuration{false};
   bool transport_failure_during_replay{false};
+  bool transport_failure_during_completion{false};
   int invalidations{0};
+  int completions{0};
 };
 
 static size_t event_index(const std::vector<std::string> &events, const std::string &event) {
@@ -97,15 +106,20 @@ int main() {
     CHECK(event_index(events, "config first") < event_index(events, "config second"));
     CHECK(event_index(events, "config second") < event_index(events, "replay first"));
     CHECK(event_index(events, "replay first") < event_index(events, "replay second"));
-
-    events.push_back("entity initial output");
-    CHECK(event_index(events, "replay second") < event_index(events, "entity initial output"));
+    CHECK(first.completions == 0);
+    coordinator.notify_recovery_complete();
+    CHECK(first.completions == 1);
+    CHECK(second.completions == 1);
+    CHECK(event_index(events, "replay second") < event_index(events, "complete first"));
+    CHECK(event_index(events, "complete first") < event_index(events, "complete second"));
 
     const int first_invalidations = first.invalidations;
     coordinator.transport_failed();
     CHECK(coordinator.state() == HubState::UNVERIFIED);
     CHECK(!coordinator.is_ready());
     CHECK(first.invalidations == first_invalidations + 1);
+    coordinator.notify_recovery_complete();
+    CHECK(first.completions == 1);
   }
 
   {
@@ -195,6 +209,23 @@ int main() {
     CHECK(!coordinator.attempt_recovery(backend));
     CHECK(coordinator.state() == HubState::UNVERIFIED);
     CHECK(event_index(events, "replay client") < events.size());
+  }
+
+  {
+    std::vector<std::string> events;
+    PbHubRecoveryCoordinator coordinator;
+    FakeBackend backend(events);
+    FakeClient first("first", events);
+    FakeClient second("second", events);
+    first.coordinator = &coordinator;
+    first.transport_failure_during_completion = true;
+    CHECK(coordinator.register_client(&first));
+    CHECK(coordinator.register_client(&second));
+    CHECK(coordinator.attempt_recovery(backend));
+    coordinator.notify_recovery_complete();
+    CHECK(coordinator.state() == HubState::UNVERIFIED);
+    CHECK(first.completions == 1);
+    CHECK(second.completions == 0);
   }
 
   if (failures != 0)

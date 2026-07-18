@@ -1,0 +1,1 @@
+PBHUB endpoint 0 on hub 'test_hub' is claimed by both digital input 'first_input' at binary_sensor[0] and digital input 'second_input' at binary_sensor[1]

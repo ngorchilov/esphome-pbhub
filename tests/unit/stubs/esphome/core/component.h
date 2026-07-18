@@ -11,12 +11,14 @@ namespace esphome {
 
 namespace setup_priority {
 inline constexpr float IO = 900.0f;
+inline constexpr float HARDWARE = 800.0f;
 }  // namespace setup_priority
 
 class Component {
  public:
   virtual ~Component() = default;
   virtual void setup() {}
+  virtual void loop() {}
   virtual void dump_config() {}
   virtual float get_setup_priority() const { return 600.0f; }
 
@@ -72,4 +74,18 @@ class Component {
   std::function<void()> timeout_callback_;
 };
 
+class PollingComponent : public Component {
+ public:
+  explicit PollingComponent(uint32_t update_interval) : update_interval_(update_interval) {}
+  virtual void update() = 0;
+
+  void set_update_interval(uint32_t update_interval) { this->update_interval_ = update_interval; }
+  uint32_t get_update_interval() const { return this->update_interval_; }
+
+ protected:
+  uint32_t update_interval_;
+};
+
 }  // namespace esphome
+
+#define LOG_UPDATE_INTERVAL(component) ::esphome::unit_test_log((component)->get_update_interval())

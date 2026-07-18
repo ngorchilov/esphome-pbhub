@@ -79,7 +79,6 @@ CONFIG_SCHEMA = (
             cv.GenerateID(): cv.declare_id(PbHubComponent),
         }
     )
-    .extend(cv.COMPONENT_SCHEMA)
     .extend(i2c.i2c_device_schema(0x61))
 )
 

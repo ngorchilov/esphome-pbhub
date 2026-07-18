@@ -25,6 +25,7 @@ class PbHubRecoveryClient {
   virtual void invalidate_applied_state() = 0;
   virtual bool restore_configuration() = 0;
   virtual bool replay_state() = 0;
+  virtual void recovery_complete() {}
 };
 
 class PbHubRecoveryBackend {
@@ -50,6 +51,16 @@ class PbHubRecoveryCoordinator {
   HubState state() const { return this->state_; }
   bool is_ready() const { return this->state_ == HubState::READY; }
   size_t client_count() const { return this->clients_.size(); }
+
+  void notify_recovery_complete() {
+    if (this->state_ != HubState::READY)
+      return;
+    for (auto *client : this->clients_) {
+      if (this->state_ != HubState::READY)
+        return;
+      client->recovery_complete();
+    }
+  }
 
   void transport_failed() {
     if (this->state_ == HubState::UNSUPPORTED)

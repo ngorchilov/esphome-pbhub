@@ -1,0 +1,19 @@
+esphome:
+  name: pbhub-own-duplicate-switch
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+switch:
+  - platform: pbhub
+    id: first_switch
+    pbhub_id: test_hub
+    pin: 1
+  - platform: pbhub
+    id: second_switch
+    pbhub_id: test_hub
+    pin: 1
