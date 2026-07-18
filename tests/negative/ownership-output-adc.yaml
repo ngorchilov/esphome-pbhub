@@ -1,0 +1,22 @@
+esphome:
+  name: pbhub-ownership-output-adc
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: pwm_conflict
+    pbhub_id: test_hub
+    pin: 20
+    mode: pwm
+
+sensor:
+  - platform: pbhub
+    id: adc_conflict
+    pbhub_id: test_hub
+    slot: 2

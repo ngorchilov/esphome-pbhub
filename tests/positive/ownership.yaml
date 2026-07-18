@@ -1,0 +1,29 @@
+esphome:
+  name: pbhub-phase2-ownership
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: pwm_endpoint_0
+    pbhub_id: test_hub
+    pin: 0
+    mode: pwm
+
+sensor:
+  - platform: pbhub
+    id: adc_endpoint_10
+    pbhub_id: test_hub
+    slot: 1
+
+light:
+  - platform: pbhub
+    id: rgb_endpoint_11
+    pbhub_id: test_hub
+    slot: 1
+    num_leds: 12

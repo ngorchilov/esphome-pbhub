@@ -1,8 +1,15 @@
 #pragma once
 
-#include "esphome/core/component.h"
+#include <cstddef>
+#include <cstdint>
+
 #include "esphome/components/i2c/i2c.h"
-#include "esphome/core/gpio.h"
+#include "esphome/core/component.h"
+
+#include "pbhub_protocol.h"
+#include "pbhub_ownership.h"
+#include "pbhub_recovery.h"
+
 #ifdef USE_OUTPUT
 #include "esphome/components/output/float_output.h"
 #endif
@@ -13,226 +20,140 @@
 #include "esphome/components/light/light_output.h"
 #endif
 
-namespace esphome
-{
-  namespace pbhub
-  {
+namespace esphome::pbhub {
 
-// ----------------------------------------------------
-// Register Defines (match M5Unit-PbHub library)
-// ----------------------------------------------------
-#define IIC_ADDR1 0x61
-#define IIC_ADDR2 0x62
-#define IIC_ADDR3 0x63
-#define IIC_ADDR4 0x64
-#define IIC_ADDR5 0x65
-#define IIC_ADDR6 0x66
-#define IIC_ADDR7 0x67
-#define IIC_ADDR8 0x68
+class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRecoveryBackend {
+ public:
+  static constexpr float SETUP_PRIORITY = setup_priority::IO;
 
-#define HUB1_ADDR 0x40
-#define HUB2_ADDR 0x50
-#define HUB3_ADDR 0x60
-#define HUB4_ADDR 0x70
-#define HUB5_ADDR 0x80
-#define HUB6_ADDR 0xA0
+  void setup() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return SETUP_PRIORITY; }
 
-#define WRITE_DIGITAL_0 0x00
-#define WRITE_DIGITAL_1 0x01
-#define WRITE_PWM_0 0x02
-#define WRITE_PWM_1 0x03
-#define READ_DIGITAL_0 0x04
-#define READ_DIGITAL_1 0x05
-#define READ_ANALOG_0 0x06
-#define READ_ANALOG_1 0x07
-#define LED_NUM 0x08
-#define LED_COLOR 0x09
-#define LED_FILL_COLOR 0x0A
-#define LED_BRIGHTNESS 0x0B
-#define SERVO_ANGLE_0 0x0C
-#define SERVO_ANGLE_1 0x0D
-#define SERVO_PULSE_0 0x0E
-#define SERVO_PULSE_1 0x0F
-#define LED_SHOW_MODE 0xFA
-#define FW_VERSION 0xFE
+  bool is_hub_ready() const { return this->recovery_.is_ready(); }
+  HubState get_hub_state() const { return this->recovery_.state(); }
+  uint8_t get_firmware_version() const { return this->firmware_version_; }
+  uint32_t get_consecutive_failures() const { return this->consecutive_failures_; }
+  uint32_t get_total_failures() const { return this->total_failures_; }
 
-    // ----------------------------------------------------
-    // PbHubComponent (core driver)
-    // ----------------------------------------------------
-    class PbHubComponent : public Component, public i2c::I2CDevice
-    {
-    public:
-      void setup() override;
-      void dump_config() override;
-      uint8_t get_fw_version();
+  bool register_recovery_client(PbHubRecoveryClient *client);
+  bool claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owner, const char *owner_id);
+  void set_led_timing_mode(uint8_t mode);
 
-      // -------- GPIO (digital) --------
-      void pin_mode(uint8_t pin, uint8_t mode); // no-op
-      void digital_write(uint8_t pin, bool state);
-      bool digital_read(uint8_t pin);
+  bool read_digital(protocol::Endpoint endpoint, bool &value);
+  bool write_digital(protocol::Endpoint endpoint, bool value);
+  bool read_adc(uint8_t channel, uint16_t &value);
+  bool write_pwm(protocol::Endpoint endpoint, uint8_t duty);
+  bool write_servo_pulse(protocol::Endpoint endpoint, uint16_t pulse_us);
+  bool write_servo_detach(protocol::Endpoint endpoint);
+  bool configure_leds(uint8_t channel, uint16_t count);
+  bool set_led_full_brightness(uint8_t channel);
+  bool fill_leds(uint8_t channel, uint16_t configured_count, uint16_t start, uint16_t count, uint8_t red,
+                 uint8_t green, uint8_t blue);
 
-      // -------- ADC --------
-      uint16_t analog_read(uint8_t slot);
+ protected:
+  FirmwareProbeResult probe_firmware() override;
+  bool restore_global_configuration() override;
 
-      // -------- PWM --------
-      void set_pwm(uint8_t slot, uint8_t idx, uint8_t duty);
+  bool feature_io_allowed_() const;
+  bool endpoint_owned_by_(protocol::Endpoint endpoint, EndpointOwner owner, const char *operation) const;
+  bool read_transaction_(const char *operation, const protocol::ReadCommand &command, uint8_t *data, size_t length);
+  bool write_transaction_(const char *operation, uint8_t reg, const uint8_t *data, size_t length);
 
-      // -------- Servo --------
-      void set_servo_angle(uint8_t slot, uint8_t idx, uint8_t angle);
-      void set_servo_pulse(uint8_t slot, uint8_t idx, uint16_t micros);
+  template<size_t N> bool write_command_(const char *operation, const protocol::WriteCommand<N> &command) {
+    if (!this->feature_io_allowed_())
+      return false;
+    return this->write_transaction_(operation, command.reg, command.payload.data(), N);
+  }
 
-      // -------- RGB / LED --------
-      void set_led_num(uint8_t slot, uint16_t count);
-      void set_led_color(uint8_t slot, uint16_t index, uint8_t r, uint8_t g, uint8_t b);
-      void fill_led_color(uint8_t slot, uint16_t start, uint16_t count, uint8_t r, uint8_t g, uint8_t b);
-      void set_led_brightness(uint8_t slot, uint8_t value);
-      void set_led_show_mode(uint8_t mode);
-      uint8_t get_led_show_mode();
+  void handle_transport_failure_(const char *operation, uint8_t reg, i2c::ErrorCode error);
+  void handle_protocol_failure_(const char *operation, uint8_t reg, const char *reason);
+  void handle_transport_success_();
+  void attempt_recovery_();
+  void schedule_recovery_();
+  bool write_led_timing_mode_(uint8_t mode);
 
-      // Helpers: slot/pin math
-      inline uint8_t slot_from_pin(uint8_t pin) const { return pin / 10; } // 30 -> slot=3
-      inline uint8_t idx_from_pin(uint8_t pin) const { return pin % 10; }  // 30 -> idx=0
-      inline uint8_t base_for_slot(uint8_t slot) const
-      {
-        static const uint8_t BASES[6] = {HUB1_ADDR, HUB2_ADDR, HUB3_ADDR, HUB4_ADDR, HUB5_ADDR, HUB6_ADDR};
-        return (slot < 6) ? BASES[slot] : HUB1_ADDR;
-      }
+  PbHubRecoveryCoordinator recovery_;
+  EndpointClaimRegistry endpoint_claims_;
+  bool configuration_error_{false};
+  bool recovery_io_active_{false};
 
-      // Register address helpers
-      inline uint8_t reg_write_digital(uint8_t slot, uint8_t idx) const
-      {
-        return base_for_slot(slot) | (idx == 0 ? WRITE_DIGITAL_0 : WRITE_DIGITAL_1);
-      }
-      inline uint8_t reg_read_digital(uint8_t slot, uint8_t idx) const
-      {
-        return base_for_slot(slot) | (idx == 0 ? READ_DIGITAL_0 : READ_DIGITAL_1);
-      }
-      inline uint8_t reg_read_analog(uint8_t slot) const
-      {
-        return base_for_slot(slot) | READ_ANALOG_0;
-      }
-      inline uint8_t reg_pwm(uint8_t slot, uint8_t idx) const
-      {
-        return base_for_slot(slot) | (idx == 0 ? WRITE_PWM_0 : WRITE_PWM_1);
-      }
-      inline uint8_t reg_servo_angle(uint8_t slot, uint8_t idx) const
-      {
-        return base_for_slot(slot) | (idx == 0 ? SERVO_ANGLE_0 : SERVO_ANGLE_1);
-      }
-      inline uint8_t reg_servo_pulse(uint8_t slot, uint8_t idx) const
-      {
-        return base_for_slot(slot) | (idx == 0 ? SERVO_PULSE_0 : SERVO_PULSE_1);
-      }
-      inline uint8_t reg_led_num(uint8_t slot) const
-      {
-        return base_for_slot(slot) | LED_NUM;
-      }
-      inline uint8_t reg_led_color(uint8_t slot) const
-      {
-        return base_for_slot(slot) | LED_COLOR;
-      }
-      inline uint8_t reg_led_fill(uint8_t slot) const
-      {
-        return base_for_slot(slot) | LED_FILL_COLOR;
-      }
-      inline uint8_t reg_led_brightness(uint8_t slot) const
-      {
-        return base_for_slot(slot) | LED_BRIGHTNESS;
-      }
-      // LED show mode and FW version are global, not slot-based.
-      inline uint8_t reg_led_show_mode() const { return LED_SHOW_MODE; }
-      inline uint8_t reg_fw_version() const { return FW_VERSION; }
-    };
+  uint8_t firmware_version_{0};
+  bool ever_ready_{false};
+  bool led_timing_configured_{false};
+  uint8_t led_timing_mode_{0};
 
-    // ----------------------------------------------------
-    // GPIO Pin Wrapper
-    // ----------------------------------------------------
-    class PbHubGPIOPin : public GPIOPin
-    {
-    public:
-      PbHubGPIOPin() = default;
-      PbHubGPIOPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+  uint32_t consecutive_failures_{0};
+  uint32_t total_failures_{0};
+  uint32_t last_failure_log_ms_{0};
+  bool failure_logged_{false};
+  bool recovery_scheduled_{false};
+};
 
-      void setup() override;
-      void pin_mode(gpio::Flags flags) override;
-      bool digital_read() override;
-      void digital_write(bool value) override;
-      size_t dump_summary(char *buffer, size_t len) const override;
-      gpio::Flags get_flags() const override { return flags_; }
-
-      void set_parent(PbHubComponent *p) { parent_ = p; }
-      void set_pin(uint8_t pin) { pin_ = pin; }
-      void set_inverted(bool inv) { inverted_ = inv; }
-      void set_flags(gpio::Flags f) { flags_ = f; }
-
-    protected:
-      PbHubComponent *parent_{nullptr};
-      uint8_t pin_{0};
-      bool inverted_{false};
-      gpio::Flags flags_{gpio::FLAG_NONE};
-    };
-
-    // ----------------------------------------------------
-    // PWM Output
-    // ----------------------------------------------------
 #ifdef USE_OUTPUT
-    class PbHubPWMPin : public output::FloatOutput
-    {
-    public:
-      PbHubPWMPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
+class PbHubPWMPin : public output::FloatOutput, public PbHubRecoveryClient {
+ public:
+  PbHubPWMPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
 
-    protected:
-      void write_state(float state) override;
+  void invalidate_applied_state() override { this->applied_known_ = false; }
+  bool restore_configuration() override { return true; }
+  bool replay_state() override;
 
-      PbHubComponent *parent_;
-      uint8_t pin_;
-    };
+ protected:
+  void write_state(float state) override;
+  bool apply_desired_state_();
+
+  PbHubComponent *parent_;
+  uint8_t pin_;
+  uint8_t desired_duty_{0};
+  uint8_t applied_duty_{0};
+  bool desired_known_{false};
+  bool applied_known_{false};
+};
 #endif
 
-    // ----------------------------------------------------
-    // ADC Sensor
-    // ----------------------------------------------------
 #ifdef USE_SENSOR
-    class PbHubADC : public sensor::Sensor, public PollingComponent
-    {
-    public:
-      PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval = 1000);
+class PbHubADC : public sensor::Sensor, public PollingComponent {
+ public:
+  PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval = 1000);
 
-      void update() override;
+  void update() override;
 
-    protected:
-      PbHubComponent *parent_;
-      uint8_t slot_;
-    };
-#endif // USE_SENSOR
+ protected:
+  PbHubComponent *parent_;
+  uint8_t slot_;
+};
+#endif
 
-    // ----------------------------------------------------
-    // RGB Light
-    // ----------------------------------------------------
 #ifdef USE_LIGHT
-    class PbHubRGBLight : public light::LightOutput
-    {
-    public:
-      PbHubRGBLight(PbHubComponent *parent, uint8_t slot) : parent_(parent), slot_(slot) {}
+class PbHubRGBLight : public light::LightOutput, public PbHubRecoveryClient {
+ public:
+  PbHubRGBLight(PbHubComponent *parent, uint8_t slot) : parent_(parent), slot_(slot) {}
 
-      light::LightTraits get_traits() override;
-      void write_state(light::LightState *state) override;
+  light::LightTraits get_traits() override;
+  void write_state(light::LightState *state) override;
 
-      // NEW: allow YAML to specify LED count
-      void set_led_count(uint16_t c)
-      {
-        led_count_ = c;
-        initialized_ = false;
-      }
+  void invalidate_applied_state() override {
+    this->configuration_applied_ = false;
+    this->applied_known_ = false;
+  }
+  bool restore_configuration() override;
+  bool replay_state() override;
 
-    protected:
-      PbHubComponent *parent_;
-      uint8_t slot_;
+  void set_led_count(uint16_t count) { this->led_count_ = count; }
 
-      // NEW: state for LED strip configuration
-      uint16_t led_count_{1};
-      bool initialized_{false};
-    };
-#endif // USE_LIGHT
-  } // namespace pbhub
-} // namespace esphome
+ protected:
+  bool apply_desired_state_();
+
+  PbHubComponent *parent_;
+  uint8_t slot_;
+  uint16_t led_count_{1};
+  protocol::Rgb desired_color_{};
+  protocol::Rgb applied_color_{};
+  bool desired_known_{false};
+  bool configuration_applied_{false};
+  bool applied_known_{false};
+};
+#endif
+
+}  // namespace esphome::pbhub

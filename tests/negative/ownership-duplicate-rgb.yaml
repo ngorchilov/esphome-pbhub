@@ -1,0 +1,21 @@
+esphome:
+  name: pbhub-ownership-duplicate-rgb
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+light:
+  - platform: pbhub
+    id: first_rgb
+    pbhub_id: test_hub
+    slot: 4
+    num_leds: 1
+  - platform: pbhub
+    id: second_rgb
+    pbhub_id: test_hub
+    slot: 4
+    num_leds: 74

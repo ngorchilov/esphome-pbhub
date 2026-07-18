@@ -1,0 +1,25 @@
+esphome:
+  name: pbhub-phase2-multi-hub
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  - id: first_hub
+    i2c_id: test_i2c
+    address: 0x61
+  - id: second_hub
+    i2c_id: test_i2c
+    address: 0x62
+
+output:
+  - platform: pbhub
+    id: first_hub_pwm
+    pbhub_id: first_hub
+    pin: 0
+    mode: pwm
+  - platform: pbhub
+    id: second_hub_pwm
+    pbhub_id: second_hub
+    pin: 0
+    mode: pwm

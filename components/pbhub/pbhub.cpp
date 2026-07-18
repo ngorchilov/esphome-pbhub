@@ -1,284 +1,487 @@
 #include "pbhub.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
-namespace esphome
-{
-  namespace pbhub
-  {
+namespace esphome::pbhub {
 
-    static const char *const TAG = "pbhub";
+static const char *const TAG = "pbhub";
+static constexpr uint32_t RECOVERY_RETRY_INTERVAL_MS = 5000;
+static constexpr uint32_t FAILURE_LOG_INTERVAL_MS = 30000;
 
-    // -----------------------------------------------------------------------------
-    // PbHubComponent
-    // -----------------------------------------------------------------------------
-    void PbHubComponent::setup()
-    {
-      ESP_LOGCONFIG(TAG, "Setting up PBHUB at 0x%02X ...", this->address_);
+static const char *hub_state_name(HubState state) {
+  switch (state) {
+    case HubState::UNVERIFIED:
+      return "UNVERIFIED";
+    case HubState::RECOVERING:
+      return "RECOVERING";
+    case HubState::READY:
+      return "READY";
+    case HubState::UNSUPPORTED:
+      return "UNSUPPORTED";
+  }
+  return "UNKNOWN";
+}
+
+static const char *endpoint_owner_name(EndpointOwner owner) {
+  switch (owner) {
+    case EndpointOwner::PWM:
+      return "PWM output";
+    case EndpointOwner::SERVO:
+      return "servo output";
+    case EndpointOwner::ADC:
+      return "ADC sensor";
+    case EndpointOwner::RGB:
+      return "RGB light";
+    case EndpointOwner::DIGITAL_INPUT:
+      return "digital input";
+    case EndpointOwner::DIGITAL_OUTPUT:
+      return "digital output";
+    case EndpointOwner::NONE:
+      return "none";
+  }
+  return "unknown";
+}
+
+static const char *i2c_error_name(i2c::ErrorCode error) {
+  switch (error) {
+    case i2c::ERROR_OK:
+      return "ok";
+    case i2c::ERROR_INVALID_ARGUMENT:
+      return "invalid argument";
+    case i2c::ERROR_NOT_ACKNOWLEDGED:
+      return "not acknowledged";
+    case i2c::ERROR_TIMEOUT:
+      return "timeout";
+    case i2c::ERROR_NOT_INITIALIZED:
+      return "not initialized";
+    case i2c::ERROR_TOO_LARGE:
+      return "too large";
+    case i2c::ERROR_UNKNOWN:
+      return "unknown";
+    case i2c::ERROR_CRC:
+      return "CRC";
+  }
+  return "unrecognized";
+}
+
+void PbHubComponent::setup() {
+  ESP_LOGCONFIG(TAG, "Setting up PBHUB at 0x%02X", this->address_);
+  if (this->configuration_error_) {
+    ESP_LOGE(TAG, "PBHUB configuration contains an invalid or duplicate endpoint claim");
+    this->mark_failed(LOG_STR("PBHUB endpoint ownership conflict"));
+    return;
+  }
+  this->attempt_recovery_();
+}
+
+void PbHubComponent::dump_config() {
+  ESP_LOGCONFIG(TAG, "PBHUB:");
+  LOG_I2C_DEVICE(this);
+  ESP_LOGCONFIG(TAG, "  State: %s", hub_state_name(this->recovery_.state()));
+  if (this->firmware_version_ != 0)
+    ESP_LOGCONFIG(TAG, "  Firmware protocol version: %u", this->firmware_version_);
+  else
+    ESP_LOGCONFIG(TAG, "  Firmware protocol version: unverified");
+  ESP_LOGCONFIG(TAG, "  Recovery clients: %u", static_cast<unsigned>(this->recovery_.client_count()));
+  ESP_LOGCONFIG(TAG, "  Communication/protocol failures: %u total, %u consecutive",
+                static_cast<unsigned>(this->total_failures_), static_cast<unsigned>(this->consecutive_failures_));
+}
+
+bool PbHubComponent::register_recovery_client(PbHubRecoveryClient *client) {
+  if (this->recovery_.register_client(client))
+    return true;
+  ESP_LOGE(TAG, "Rejected invalid or duplicate PBHUB recovery client registration");
+  this->configuration_error_ = true;
+  return false;
+}
+
+bool PbHubComponent::claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owner, const char *owner_id) {
+  protocol::Endpoint endpoint{};
+  if (!protocol::decode_endpoint(encoded_endpoint, endpoint) || !is_valid_endpoint_owner(owner) || owner_id == nullptr) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB endpoint claim for encoded endpoint %u", encoded_endpoint);
+    this->configuration_error_ = true;
+    return false;
+  }
+
+  const auto *existing = this->endpoint_claims_.find(endpoint);
+  if (existing == nullptr) {
+    if (!this->endpoint_claims_.claim(endpoint, owner, owner_id)) {
+      ESP_LOGE(TAG, "Rejected invalid PBHUB endpoint claim for encoded endpoint %u", encoded_endpoint);
+      this->configuration_error_ = true;
+      return false;
     }
+    return true;
+  }
 
-    void PbHubComponent::dump_config()
-    {
-      ESP_LOGCONFIG(TAG, "PBHUB:");
-      ESP_LOGCONFIG(TAG, "  Address: 0x%02X", this->address_);
-    }
+  ESP_LOGE(TAG, "PBHUB endpoint %u is claimed by both %s '%s' and %s '%s'", encoded_endpoint,
+           endpoint_owner_name(existing->owner), existing->owner_id, endpoint_owner_name(owner), owner_id);
+  this->endpoint_claims_.claim(endpoint, owner, owner_id);
+  this->configuration_error_ = true;
+  return false;
+}
 
-    uint8_t PbHubComponent::get_fw_version()
-    {
-      uint8_t reg = reg_fw_version();
-      uint8_t val = 0;
-      auto err = this->write_read(&reg, 1, &val, 1);
-      if (err != i2c::ERROR_OK)
-      {
-        ESP_LOGW(TAG, "FW_VERSION read failed (reg=0x%02X err=%d)", reg, err);
-        return 0;
-      }
-      ESP_LOGI(TAG, "Firmware version: %u (reg=0x%02X)", val, reg);
-      return val;
+void PbHubComponent::set_led_timing_mode(uint8_t mode) {
+  protocol::WriteCommand<1> command{};
+  if (!protocol::make_led_timing_write(mode, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB LED timing mode %u", mode);
+    this->configuration_error_ = true;
+    return;
+  }
+  this->led_timing_configured_ = true;
+  this->led_timing_mode_ = mode;
+}
 
-    } // -------- GPIO (digital) --------
-    void PbHubComponent::pin_mode(uint8_t pin, uint8_t mode)
-    {
-      ESP_LOGD(TAG, "pin_mode(pin=%u, mode=%u) -> no-op", pin, mode);
-    }
+bool PbHubComponent::feature_io_allowed_() const {
+  return !this->configuration_error_ &&
+         (this->recovery_.state() == HubState::READY ||
+          (this->recovery_.state() == HubState::RECOVERING && this->recovery_io_active_));
+}
 
-    void PbHubComponent::digital_write(uint8_t pin, bool state)
-    {
-      uint8_t slot = slot_from_pin(pin);
-      uint8_t idx = idx_from_pin(pin);
+bool PbHubComponent::endpoint_owned_by_(protocol::Endpoint endpoint, EndpointOwner owner, const char *operation) const {
+  if (!this->endpoint_claims_.owns(endpoint, owner)) {
+    ESP_LOGE(TAG, "%s rejected because its PBHUB endpoint is not claimed by %s", operation, endpoint_owner_name(owner));
+    return false;
+  }
+  return true;
+}
 
-      uint8_t reg = reg_write_digital(slot, idx);
-      uint8_t val = state ? 0x01 : 0x00;
+bool PbHubComponent::read_transaction_(const char *operation, const protocol::ReadCommand &command, uint8_t *data,
+                                       size_t length) {
+  if (command.response_length != length) {
+    ESP_LOGE(TAG, "%s has an internal response-length mismatch for register 0x%02X", operation, command.reg);
+    return false;
+  }
 
-      auto err = this->write_register(reg, &val, 1);
-      ESP_LOGD(TAG, "DWRITE pin %u (slot=%u idx=%u) -> %s (reg=0x%02X val=0x%02X err=%d)",
-               pin, slot, idx, state ? "ON" : "OFF", reg, val, err);
-    }
+  const auto error = i2c::I2CDevice::read_register(command.reg, data, length);
+  if (error != i2c::ERROR_OK) {
+    this->handle_transport_failure_(operation, command.reg, error);
+    return false;
+  }
+  this->handle_transport_success_();
+  return true;
+}
 
-    bool PbHubComponent::digital_read(uint8_t pin)
-    {
-      uint8_t slot = slot_from_pin(pin);
-      uint8_t idx = idx_from_pin(pin);
+bool PbHubComponent::write_transaction_(const char *operation, uint8_t reg, const uint8_t *data, size_t length) {
+  const auto error = i2c::I2CDevice::write_register(reg, data, length);
+  if (error != i2c::ERROR_OK) {
+    this->handle_transport_failure_(operation, reg, error);
+    return false;
+  }
+  this->handle_transport_success_();
+  return true;
+}
 
-      uint8_t reg = reg_read_digital(slot, idx);
-      uint8_t val = 0;
-      auto err = this->write_read(&reg, 1, &val, 1);
-      if (err != i2c::ERROR_OK)
-      {
-        ESP_LOGW(TAG, "DREAD failed: pin %u (slot=%u idx=%u) reg=0x%02X err=%d",
-                 pin, slot, idx, reg, err);
-        return false;
-      }
-      bool state = val & 0x01;
-      ESP_LOGVV(TAG, "DREAD pin %u (slot=%u idx=%u) <- %s (reg=0x%02X val=0x%02X)",
-                pin, slot, idx, state ? "ON" : "OFF", reg, val);
-      return state;
-    }
+void PbHubComponent::handle_transport_failure_(const char *operation, uint8_t reg, i2c::ErrorCode error) {
+  const uint32_t now = millis();
+  this->consecutive_failures_++;
+  this->total_failures_++;
 
-    // -------- ADC --------
-    uint16_t PbHubComponent::analog_read(uint8_t slot)
-    {
-      uint8_t reg = reg_read_analog(slot);
-      uint8_t buf[2] = {0, 0};
-      auto err = this->write_read(&reg, 1, buf, 2);
-      if (err != i2c::ERROR_OK)
-      {
-        ESP_LOGW(TAG, "AREAD failed: slot=%u reg=0x%02X err=%d", slot, reg, err);
-        return 0;
-      }
-      uint16_t value = static_cast<uint16_t>(buf[0] | (buf[1] << 8));
-      ESP_LOGVV(TAG, "AREAD slot=%u <- %u (reg=0x%02X raw=%02X %02X)", slot, value, reg, buf[0], buf[1]);
-      return value;
-    }
+  if (!this->failure_logged_ || now - this->last_failure_log_ms_ >= FAILURE_LOG_INTERVAL_MS) {
+    ESP_LOGW(TAG, "%s failed at register 0x%02X: I2C error %u (%s)", operation, reg,
+             static_cast<unsigned>(error), i2c_error_name(error));
+    this->last_failure_log_ms_ = now;
+    this->failure_logged_ = true;
+  } else {
+    ESP_LOGV(TAG, "%s failed at register 0x%02X: I2C error %u", operation, reg, static_cast<unsigned>(error));
+  }
 
-    // -------- PWM --------
-    void PbHubComponent::set_pwm(uint8_t slot, uint8_t idx, uint8_t duty)
-    {
-      uint8_t reg = reg_pwm(slot, idx);
-      auto err = this->write_register(reg, &duty, 1);
-      ESP_LOGVV(TAG, "PWM slot=%u idx=%u duty=%u (reg=0x%02X err=%d)", slot, idx, duty, reg, err);
-    }
+  this->recovery_.transport_failed();
+  this->status_set_warning(LOG_STR("PBHUB communication failure"));
+  this->schedule_recovery_();
+}
 
-    // -------- Servo --------
-    void PbHubComponent::set_servo_angle(uint8_t slot, uint8_t idx, uint8_t angle)
-    {
-      uint8_t reg = reg_servo_angle(slot, idx);
-      auto err = this->write_register(reg, &angle, 1);
-      ESP_LOGVV(TAG, "SERVO slot=%u idx=%u angle=%u (reg=0x%02X err=%d)", slot, idx, angle, reg, err);
-    }
+void PbHubComponent::handle_protocol_failure_(const char *operation, uint8_t reg, const char *reason) {
+  const uint32_t now = millis();
+  this->consecutive_failures_++;
+  this->total_failures_++;
+  if (!this->failure_logged_ || now - this->last_failure_log_ms_ >= FAILURE_LOG_INTERVAL_MS) {
+    ESP_LOGW(TAG, "%s returned an invalid response at register 0x%02X: %s", operation, reg, reason);
+    this->last_failure_log_ms_ = now;
+    this->failure_logged_ = true;
+  } else {
+    ESP_LOGV(TAG, "%s returned an invalid response at register 0x%02X: %s", operation, reg, reason);
+  }
+  this->recovery_.transport_failed();
+  this->status_set_warning(LOG_STR("PBHUB protocol response failure"));
+  this->schedule_recovery_();
+}
 
-    void PbHubComponent::set_servo_pulse(uint8_t slot, uint8_t idx, uint16_t micros)
-    {
-      uint8_t reg = reg_servo_pulse(slot, idx);
-      uint8_t data[2] = {uint8_t(micros & 0xFF), uint8_t(micros >> 8)};
-      auto err = this->write_register(reg, data, 2);
-      ESP_LOGVV(TAG, "SERVO slot=%u idx=%u pulse=%uus (reg=0x%02X data=%02X %02X err=%d)",
-                slot, idx, micros, reg, data[0], data[1], err);
-    }
+void PbHubComponent::handle_transport_success_() { this->consecutive_failures_ = 0; }
 
-    // -------- RGB Light --------
-    void PbHubComponent::set_led_num(uint8_t slot, uint16_t count)
-    {
-      uint8_t reg = reg_led_num(slot);
-      uint8_t data[2] = {uint8_t(count & 0xFF), uint8_t(count >> 8)};
-      auto err = this->write_register(reg, data, 2);
-      ESP_LOGD(TAG, "LED_NUM slot=%u count=%u (reg=0x%02X err=%d)", slot, count, reg, err);
-    }
+void PbHubComponent::schedule_recovery_() {
+  if (this->configuration_error_ || this->recovery_scheduled_ || this->recovery_.state() != HubState::UNVERIFIED)
+    return;
 
-    void PbHubComponent::set_led_color(uint8_t slot, uint16_t index, uint8_t r, uint8_t g, uint8_t b)
-    {
-      uint8_t reg = reg_led_color(slot);
-      uint8_t data[5] = {
-          uint8_t(index & 0xFF),
-          uint8_t(index >> 8),
-          r, g, b};
-      auto err = this->write_register(reg, data, sizeof(data));
-      ESP_LOGD(TAG, "LED_COLOR slot=%u index=%u color=(%u,%u,%u) (reg=0x%02X err=%d)",
-               slot, index, r, g, b, reg, err);
-    }
+  this->recovery_scheduled_ = true;
+  this->set_timeout("firmware_probe", RECOVERY_RETRY_INTERVAL_MS, [this]() {
+    this->recovery_scheduled_ = false;
+    this->attempt_recovery_();
+  });
+}
 
-    void PbHubComponent::fill_led_color(uint8_t slot, uint16_t start, uint16_t count,
-                                        uint8_t r, uint8_t g, uint8_t b)
-    {
-      uint8_t reg = reg_led_fill(slot);
-      uint8_t data[7] = {
-          uint8_t(start & 0xFF),
-          uint8_t(start >> 8),
-          uint8_t(count & 0xFF),
-          uint8_t(count >> 8),
-          r, g, b};
-      auto err = this->write_register(reg, data, sizeof(data));
-      ESP_LOGD(TAG, "LED_FILL slot=%u start=%u count=%u color=(%u,%u,%u) (reg=0x%02X err=%d)",
-               slot, start, count, r, g, b, reg, err);
-    }
+void PbHubComponent::attempt_recovery_() {
+  this->recovery_scheduled_ = false;
+  this->recovery_io_active_ = true;
+  const bool recovered = this->recovery_.attempt_recovery(*this);
+  this->recovery_io_active_ = false;
+  if (recovered) {
+    this->status_clear_warning();
+    this->failure_logged_ = false;
+    if (this->ever_ready_)
+      ESP_LOGI(TAG, "PBHUB communication recovered; firmware protocol version %u verified", this->firmware_version_);
+    else
+      ESP_LOGCONFIG(TAG, "  Firmware protocol version: %u", this->firmware_version_);
+    this->ever_ready_ = true;
+    return;
+  }
 
-    void PbHubComponent::set_led_brightness(uint8_t slot, uint8_t value)
-    {
-      uint8_t reg = reg_led_brightness(slot);
-      auto err = this->write_register(reg, &value, 1);
-      ESP_LOGD(TAG, "LED_BRIGHTNESS slot=%u value=%u (reg=0x%02X err=%d)", slot, value, reg, err);
-    }
+  if (this->recovery_.state() == HubState::UNSUPPORTED) {
+    ESP_LOGE(TAG, "Unsupported PBHUB firmware protocol version %u; expected exactly %u", this->firmware_version_,
+             protocol::EXPECTED_FIRMWARE_VERSION);
+    this->status_clear_warning();
+    this->mark_failed(LOG_STR("Unsupported PBHUB firmware version"));
+    return;
+  }
 
-    void PbHubComponent::set_led_show_mode(uint8_t mode)
-    {
-      uint8_t reg = reg_led_show_mode();
-      auto err = this->write_register(reg, &mode, 1);
-      ESP_LOGD(TAG, "LED_SHOW_MODE mode=%u (reg=0x%02X err=%d)", mode, reg, err);
-    }
+  this->status_set_warning(LOG_STR("PBHUB firmware version unverified"));
+  this->schedule_recovery_();
+}
 
-    uint8_t PbHubComponent::get_led_show_mode()
-    {
-      uint8_t reg = reg_led_show_mode();
-      uint8_t val = 0;
-      auto err = this->write_read(&reg, 1, &val, 1);
-      if (err != i2c::ERROR_OK)
-      {
-        ESP_LOGW(TAG, "LED_SHOW_MODE read failed (reg=0x%02X err=%d)", reg, err);
-        return 0;
-      }
-      ESP_LOGD(TAG, "LED_SHOW_MODE read -> %u (reg=0x%02X)", val, reg);
-      return val;
-    }
+FirmwareProbeResult PbHubComponent::probe_firmware() {
+  const auto command = protocol::firmware_version_read();
+  std::array<uint8_t, 1> response{};
+  if (!this->read_transaction_("firmware version probe", command, response.data(), response.size()))
+    return FirmwareProbeResult::TRANSPORT_FAILURE;
 
-    // -----------------------------------------------------------------------------
-    // GPIOPin wrapper
-    // -----------------------------------------------------------------------------
-    void PbHubGPIOPin::setup()
-    {
-      ESP_LOGD(TAG, "GPIOPin setup pin=%u inverted=%d flags=0x%02X",
-               pin_, inverted_, flags_);
-    }
+  this->firmware_version_ = response[0];
+  return protocol::is_supported_firmware(this->firmware_version_) ? FirmwareProbeResult::SUPPORTED
+                                                                  : FirmwareProbeResult::UNSUPPORTED;
+}
 
-    void PbHubGPIOPin::pin_mode(gpio::Flags flags)
-    {
-      this->flags_ = flags;
-      ESP_LOGD(TAG, "GPIOPin pin_mode pin=%u flags=0x%02X", pin_, flags_);
-    }
+bool PbHubComponent::restore_global_configuration() {
+  if (!this->led_timing_configured_)
+    return true;
+  return this->write_led_timing_mode_(this->led_timing_mode_);
+}
 
-    bool PbHubGPIOPin::digital_read()
-    {
-      if (!parent_)
-        return false;
-      bool raw = parent_->digital_read(pin_);
-      return inverted_ ? !raw : raw;
-    }
+bool PbHubComponent::write_led_timing_mode_(uint8_t mode) {
+  protocol::WriteCommand<1> command{};
+  if (!protocol::make_led_timing_write(mode, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB LED timing mode %u", mode);
+    return false;
+  }
+  return this->write_command_("LED timing write", command);
+}
 
-    void PbHubGPIOPin::digital_write(bool value)
-    {
-      if (!parent_)
-        return;
-      bool send = inverted_ ? !value : value;
-      parent_->digital_write(pin_, send);
-    }
+bool PbHubComponent::read_digital(protocol::Endpoint endpoint, bool &value) {
+  protocol::ReadCommand command{};
+  if (!protocol::make_digital_read(endpoint, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB digital-read endpoint");
+    return false;
+  }
+  if (!this->endpoint_owned_by_(endpoint, EndpointOwner::DIGITAL_INPUT, "digital read") ||
+      !this->feature_io_allowed_())
+    return false;
 
-    size_t PbHubGPIOPin::dump_summary(char *buffer, size_t len) const
-    {
-      return snprintf(buffer, len, "pbhub pin %u (inverted=%s)", pin_, inverted_ ? "yes" : "no");
-    }
+  std::array<uint8_t, 1> response{};
+  if (!this->read_transaction_("digital read", command, response.data(), response.size()))
+    return false;
+  if (!protocol::decode_digital(response, value)) {
+    this->handle_protocol_failure_("digital read", command.reg, "expected 0 or 1");
+    return false;
+  }
+  return true;
+}
 
-    // -----------------------------------------------------------------------------
-    // PWM wrapper
-    // -----------------------------------------------------------------------------
+bool PbHubComponent::write_digital(protocol::Endpoint endpoint, bool value) {
+  protocol::WriteCommand<1> command{};
+  if (!protocol::make_digital_write(endpoint, value, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB digital-write endpoint");
+    return false;
+  }
+  if (!this->endpoint_owned_by_(endpoint, EndpointOwner::DIGITAL_OUTPUT, "digital write"))
+    return false;
+  return this->write_command_("digital write", command);
+}
+
+bool PbHubComponent::read_adc(uint8_t channel, uint16_t &value) {
+  protocol::ReadCommand command{};
+  if (!protocol::make_adc_read(channel, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB ADC channel %u", channel);
+    return false;
+  }
+  if (!this->endpoint_owned_by_({channel, 0}, EndpointOwner::ADC, "ADC read") || !this->feature_io_allowed_())
+    return false;
+
+  std::array<uint8_t, 2> response{};
+  if (!this->read_transaction_("ADC read", command, response.data(), response.size()))
+    return false;
+  if (!protocol::decode_adc(response, value)) {
+    this->handle_protocol_failure_("ADC read", command.reg, "expected a 12-bit value");
+    return false;
+  }
+  return true;
+}
+
+bool PbHubComponent::write_pwm(protocol::Endpoint endpoint, uint8_t duty) {
+  protocol::WriteCommand<1> command{};
+  if (!protocol::make_pwm_write(endpoint, duty, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB PWM endpoint");
+    return false;
+  }
+  if (!this->endpoint_owned_by_(endpoint, EndpointOwner::PWM, "PWM write"))
+    return false;
+  return this->write_command_("PWM write", command);
+}
+
+bool PbHubComponent::write_servo_pulse(protocol::Endpoint endpoint, uint16_t pulse_us) {
+  protocol::WriteCommand<2> command{};
+  if (!protocol::make_servo_pulse_write(endpoint, pulse_us, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB servo endpoint or pulse %u", pulse_us);
+    return false;
+  }
+  if (!this->endpoint_owned_by_(endpoint, EndpointOwner::SERVO, "servo pulse write"))
+    return false;
+  return this->write_command_("servo pulse write", command);
+}
+
+bool PbHubComponent::write_servo_detach(protocol::Endpoint endpoint) {
+  protocol::WriteCommand<1> command{};
+  if (!protocol::make_digital_write(endpoint, false, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB servo-detach endpoint");
+    return false;
+  }
+  if (!this->endpoint_owned_by_(endpoint, EndpointOwner::SERVO, "servo detach"))
+    return false;
+  return this->write_command_("servo detach", command);
+}
+
+bool PbHubComponent::configure_leds(uint8_t channel, uint16_t count) {
+  protocol::WriteCommand<2> command{};
+  if (!protocol::make_led_count_write(channel, count, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB LED channel or count %u", count);
+    return false;
+  }
+  if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED count write"))
+    return false;
+  return this->write_command_("LED count write", command);
+}
+
+bool PbHubComponent::set_led_full_brightness(uint8_t channel) {
+  protocol::WriteCommand<1> command{};
+  if (!protocol::make_led_full_brightness_write(channel, command)) {
+    ESP_LOGE(TAG, "Rejected invalid PBHUB LED channel %u", channel);
+    return false;
+  }
+  if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED brightness write"))
+    return false;
+  return this->write_command_("LED brightness write", command);
+}
+
+bool PbHubComponent::fill_leds(uint8_t channel, uint16_t configured_count, uint16_t start, uint16_t count, uint8_t red,
+                               uint8_t green, uint8_t blue) {
+  protocol::WriteCommand<7> command{};
+  if (!protocol::make_led_fill_write(channel, configured_count, start, count, {red, green, blue}, command)) {
+    ESP_LOGE(TAG, "Rejected unsafe PBHUB LED fill: channel=%u configured=%u start=%u count=%u", channel,
+             configured_count, start, count);
+    return false;
+  }
+  if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED fill write"))
+    return false;
+  return this->write_command_("LED fill write", command);
+}
+
 #ifdef USE_OUTPUT
-    void PbHubPWMPin::write_state(float state)
-    {
-      if (!parent_)
-        return;
-      uint8_t duty = static_cast<uint8_t>(state * 255.0f);
-      uint8_t slot = parent_->slot_from_pin(pin_);
-      uint8_t idx = parent_->idx_from_pin(pin_);
-      parent_->set_pwm(slot, idx, duty);
-    }
+void PbHubPWMPin::write_state(float state) {
+  if (this->parent_ == nullptr)
+    return;
+  const float clamped = std::max(0.0f, std::min(1.0f, state));
+  this->desired_duty_ = static_cast<uint8_t>(std::lround(clamped * 255.0f));
+  this->desired_known_ = true;
+  if (this->parent_->is_hub_ready())
+    this->apply_desired_state_();
+}
+
+bool PbHubPWMPin::replay_state() { return !this->desired_known_ || this->apply_desired_state_(); }
+
+bool PbHubPWMPin::apply_desired_state_() {
+  if (this->applied_known_ && this->applied_duty_ == this->desired_duty_)
+    return true;
+  protocol::Endpoint endpoint{};
+  if (!protocol::decode_endpoint(this->pin_, endpoint) || !this->parent_->write_pwm(endpoint, this->desired_duty_))
+    return false;
+  this->applied_duty_ = this->desired_duty_;
+  this->applied_known_ = true;
+  return true;
+}
 #endif
 
-    // -----------------------------------------------------------------------------
-    // ADC wrapper
-    // -----------------------------------------------------------------------------
 #ifdef USE_SENSOR
-    PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval)
-        : PollingComponent(update_interval), parent_(parent), slot_(slot) {}
+PbHubADC::PbHubADC(PbHubComponent *parent, uint8_t slot, uint32_t update_interval)
+    : PollingComponent(update_interval), parent_(parent), slot_(slot) {}
 
-    void PbHubADC::update()
-    {
-      if (!parent_)
-        return;
-      uint16_t val = parent_->analog_read(slot_);
-      publish_state(val);
-    }
+void PbHubADC::update() {
+  if (this->parent_ == nullptr)
+    return;
+  uint16_t value;
+  if (this->parent_->read_adc(this->slot_, value))
+    this->publish_state(value);
+}
 #endif
-    // -----------------------------------------------------------------------------
-    // RGB Light wrapper
-    // -----------------------------------------------------------------------------
+
 #ifdef USE_LIGHT
-    light::LightTraits PbHubRGBLight::get_traits()
-    {
-      light::LightTraits traits;
-      traits.set_supported_color_modes({light::ColorMode::RGB});
-      return traits;
-    }
+light::LightTraits PbHubRGBLight::get_traits() {
+  light::LightTraits traits;
+  traits.set_supported_color_modes({light::ColorMode::RGB});
+  return traits;
+}
 
-    void PbHubRGBLight::write_state(light::LightState *state)
-    {
-      if (!parent_)
-        return;
+void PbHubRGBLight::write_state(light::LightState *state) {
+  if (this->parent_ == nullptr)
+    return;
 
-      auto color = state->current_values.get_color_mode();
-      float red, green, blue;
-      state->current_values_as_rgb(&red, &green, &blue);
-      float brightness = state->current_values.get_brightness(); // 0.0 – 1.0
+  float red;
+  float green;
+  float blue;
+  state->current_values_as_rgb(&red, &green, &blue);
+  const auto to_byte = [](float value) {
+    return static_cast<uint8_t>(std::lround(std::max(0.0f, std::min(1.0f, value)) * 255.0f));
+  };
+  this->desired_color_ = {to_byte(red), to_byte(green), to_byte(blue)};
+  this->desired_known_ = true;
+  if (this->parent_->is_hub_ready())
+    this->apply_desired_state_();
+}
 
-      uint8_t slot = this->slot_;
-      uint8_t idx = 0; // single LED per slot
+bool PbHubRGBLight::restore_configuration() {
+  if (this->configuration_applied_)
+    return true;
+  if (!this->parent_->configure_leds(this->slot_, this->led_count_) ||
+      !this->parent_->set_led_full_brightness(this->slot_))
+    return false;
+  this->configuration_applied_ = true;
+  return true;
+}
 
-      // Apply RGB color
-      uint8_t r = static_cast<uint8_t>(red * 255.0f);
-      uint8_t g = static_cast<uint8_t>(green * 255.0f);
-      uint8_t b = static_cast<uint8_t>(blue * 255.0f);
-      parent_->set_led_color(slot, idx, r, g, b);
+bool PbHubRGBLight::replay_state() { return !this->desired_known_ || this->apply_desired_state_(); }
 
-      // Apply brightness through hub firmware support
-      uint8_t duty = static_cast<uint8_t>(brightness * 255.0f);
-      parent_->set_led_brightness(slot, duty);
-    }
-#endif // USE_LIGHT
-  } // namespace pbhub
-} // namespace esphome
+bool PbHubRGBLight::apply_desired_state_() {
+  if (this->applied_known_ && this->applied_color_.red == this->desired_color_.red &&
+      this->applied_color_.green == this->desired_color_.green &&
+      this->applied_color_.blue == this->desired_color_.blue)
+    return true;
+  if (!this->parent_->fill_leds(this->slot_, this->led_count_, 0, this->led_count_, this->desired_color_.red,
+                                this->desired_color_.green, this->desired_color_.blue))
+    return false;
+  this->applied_color_ = this->desired_color_;
+  this->applied_known_ = true;
+  return true;
+}
+#endif
+
+}  // namespace esphome::pbhub

@@ -1,0 +1,19 @@
+esphome:
+  name: pbhub-ownership-duplicate-adc
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+sensor:
+  - platform: pbhub
+    id: first_adc
+    pbhub_id: test_hub
+    slot: 3
+  - platform: pbhub
+    id: second_adc
+    pbhub_id: test_hub
+    slot: 3

@@ -410,6 +410,8 @@ components/pbhub/
   sensor.py
   switch.py
   pbhub_protocol.h
+  pbhub_ownership.h
+  pbhub_recovery.h
   pbhub.h
   pbhub.cpp
   pbhub_entities.h
@@ -418,6 +420,10 @@ components/pbhub/
 
 - `pbhub_protocol.h`: scoped constants, `Endpoint`, register construction and
   endian helpers with no ESPHome entity dependency.
+- `pbhub_ownership.h`: host-testable endpoint ownership registry with no
+  ESPHome entity dependency.
+- `pbhub_recovery.h`: host-testable health state machine and recovery-client
+  orchestration with no ESPHome entity dependency.
 - `pbhub.h/.cpp`: I2C transport, device health, verified firmware-version state,
   recovery replay, endpoint ownership and typed protocol operations.
 - `pbhub_entities.h/.cpp`: thin feature-guarded ESPHome entity wrappers.
@@ -450,8 +456,11 @@ bool write_digital(Endpoint endpoint, bool value);
 bool read_adc(uint8_t slot, uint16_t &value);
 bool write_pwm(Endpoint endpoint, uint8_t duty);
 bool write_servo_pulse(Endpoint endpoint, uint16_t pulse_us);
+bool write_servo_detach(Endpoint endpoint);
 bool configure_leds(uint8_t slot, uint16_t count);
-bool fill_leds(uint8_t slot, uint16_t start, uint16_t count,
+bool set_led_full_brightness(uint8_t slot);
+bool fill_leds(uint8_t slot, uint16_t configured_count,
+               uint16_t start, uint16_t count,
                uint8_t red, uint8_t green, uint8_t blue);
 ```
 
@@ -460,7 +469,11 @@ public method validates again at runtime before constructing a register.
 
 For writes, `true` means that the exact validated command was transported
 without an ESPHome I2C error; it is not physical-state confirmation. The
-`write_pwm()` operation selects digital low/high for duties 0/255 internally.
+firmware-version read and optional global LED timing write are also typed
+protocol commands even though they are parent-internal rather than public entity
+operations. The `write_pwm()` operation selects digital low/high for duties
+0/255 internally. `fill_leds()` requires the configured strip count so it can
+prove `start + count <= configured_count <= 74` before constructing a register.
 This success/failure boundary cannot detect the firmware's stale-response ADC
 timeout when I2C itself succeeds.
 
@@ -697,12 +710,15 @@ Changes:
 - Add the parent health state machine, recovery-client interface, firmware
   probing, health counters, rate-limited retries and applied-state invalidation.
 - Add endpoint ownership claims.
+- Remove the obsolete custom GPIOPin adapter so it cannot bypass cross-platform
+  ownership validation.
 - Remove unsafe base fallback and duplicate schema fields.
 
 Acceptance:
 
-- Unit-level register tests cover all six channel bases, all operations and the
-  exact payload/response length of every transaction.
+- Unit-level register tests cover all six channel bases, every exposed typed
+  operation, the firmware/global commands and the exact payload/response length
+  of every transaction.
 - No invalid endpoint can produce an I2C register.
 - Simulated host-detected transport failure does not become a valid reading.
 - A simulated firmware-version response of 2 enables operation; any other
@@ -724,7 +740,6 @@ Changes:
 
 - Add native polling binary sensor.
 - Add native digital switch.
-- Remove the custom GPIOPin adapter.
 - Validate a representative deployment configuration without tracking it.
 
 Acceptance:

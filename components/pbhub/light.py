@@ -1,12 +1,13 @@
 import esphome.codegen as cg
 from esphome.components import light
 import esphome.config_validation as cv
-from esphome.const import CONF_OUTPUT_ID
+from esphome.const import CONF_ID, CONF_OUTPUT_ID
 
 from . import (
     CONF_NUM_LEDS,
     CONF_PBHUB_ID,
     CONF_SLOT,
+    EndpointOwner,
     PbHubComponent,
     pbhub_ns,
     validate_led_count,
@@ -31,5 +32,13 @@ CONFIG_SCHEMA = light.RGB_LIGHT_SCHEMA.extend(
 async def to_code(config):
     parent = await cg.get_variable(config[CONF_PBHUB_ID])
     var = cg.new_Pvariable(config[CONF_OUTPUT_ID], parent, config[CONF_SLOT])
+    cg.add(
+        parent.claim_endpoint(
+            config[CONF_SLOT] * 10 + 1,
+            EndpointOwner.RGB,
+            str(config[CONF_ID]),
+        )
+    )
+    cg.add(parent.register_recovery_client(var))
     cg.add(var.set_led_count(config[CONF_NUM_LEDS]))
     await light.register_light(var, config)

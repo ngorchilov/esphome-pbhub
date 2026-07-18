@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 REQUIRED_ESPHOME_VERSION = "Version: 2026.7.0"
@@ -96,6 +97,41 @@ def compile_fixture(esphome, root, fixture):
     return True
 
 
+def check_unit_test(cxx, root, source, build_dir):
+    executable = build_dir / source.stem
+    compile_result = run(
+        [
+            cxx,
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-pedantic",
+            "-I",
+            str(root / "tests" / "unit" / "stubs"),
+            "-I",
+            str(root),
+            str(source),
+            "-o",
+            str(executable),
+        ],
+        root,
+    )
+    compile_label = f"unit compile {source.relative_to(root)}"
+    if compile_result.returncode != 0:
+        report_failure(compile_label, compile_result)
+        return False
+    print(f"[PASS] {compile_label}")
+
+    run_result = run([str(executable)], root)
+    run_label = f"unit run {source.relative_to(root)}"
+    if run_result.returncode != 0:
+        report_failure(run_label, run_result)
+        return False
+    print(f"[PASS] {run_label}")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Validate PBHUB fixtures with ESPHome 2026.7.0"
@@ -103,7 +139,7 @@ def main():
     parser.add_argument(
         "--compile",
         action="store_true",
-        help="also compile all Phase 1 positive fixtures",
+        help="also compile all positive ESPHome fixtures",
     )
     args = parser.parse_args()
 
@@ -121,6 +157,20 @@ def main():
         return 1
 
     passed = True
+
+    unit_sources = sorted((root / "tests" / "unit").glob("*_test.cpp"))
+    if not unit_sources:
+        print("[FAIL] no C++ unit tests found", file=sys.stderr)
+        return 1
+    configured_cxx = os.environ.get("CXX", "c++")
+    cxx = shutil.which(configured_cxx)
+    if cxx is None:
+        print(f"[FAIL] C++ compiler not found: {configured_cxx}", file=sys.stderr)
+        return 1
+    with tempfile.TemporaryDirectory(prefix="pbhub-unit-") as temp_dir:
+        build_dir = Path(temp_dir)
+        for source in unit_sources:
+            passed = check_unit_test(cxx, root, source, build_dir) and passed
 
     positive_dir = root / "tests" / "positive"
     positive_fixtures = sorted(positive_dir.glob("*.yaml"))

@@ -1,22 +1,20 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome import pins
+import esphome.final_validate as fv
 from esphome.components import i2c
 from esphome.const import (
     CONF_ID,
-    CONF_INPUT,
-    CONF_INVERTED,
     CONF_MODE,
     CONF_NUM_LEDS,
-    CONF_NUMBER,
-    CONF_OUTPUT,
+    CONF_OUTPUT_ID,
+    CONF_PIN,
+    CONF_PLATFORM,
 )
 
 CODEOWNERS = ["@ngorchilov"]
 DEPENDENCIES = ["i2c"]
 MULTI_CONF = True
 
-CONF_PBHUB = "pbhub"
 CONF_PBHUB_ID = "pbhub_id"
 CONF_SLOT = "slot"
 
@@ -28,7 +26,7 @@ VALID_ENDPOINTS_TEXT = ", ".join(str(endpoint) for endpoint in VALID_ENDPOINTS)
 
 pbhub_ns = cg.esphome_ns.namespace("pbhub")
 PbHubComponent = pbhub_ns.class_("PbHubComponent", cg.Component, i2c.I2CDevice)
-PbHubGPIOPin = pbhub_ns.class_("PbHubGPIOPin", cg.GPIOPin)
+EndpointOwner = pbhub_ns.enum("EndpointOwner", is_class=True)
 
 
 def validate_slot(value):
@@ -92,38 +90,108 @@ async def to_code(config):
     await i2c.register_i2c_device(var, config)
 
 
-def _validate_gpio_mode(value):
-    value = value or {}
-    if value.get(CONF_INPUT, False) and value.get(CONF_OUTPUT, False):
-        raise cv.Invalid("Only one of 'input' or 'output' can be true")
-    return value
+def _path_text(path):
+    text = ""
+    for part in path:
+        if isinstance(part, int):
+            text += f"[{part}]"
+        else:
+            text += ("." if text else "") + str(part)
+    return text
 
 
-# Temporary legacy binding retained only until the native digital entities land
-# in Phase 3. Do not use this schema for new v2 examples.
-PBHUB_PIN_SCHEMA = cv.All(
-    {
-        cv.GenerateID(): cv.declare_id(PbHubGPIOPin),
-        cv.Required(CONF_PBHUB): cv.use_id(PbHubComponent),
-        cv.Required(CONF_NUMBER): validate_endpoint,
-        cv.Optional(CONF_MODE, default={}): cv.All(
-            {
-                cv.Optional(CONF_INPUT, default=False): cv.boolean,
-                cv.Optional(CONF_OUTPUT, default=False): cv.boolean,
-            },
-            _validate_gpio_mode,
+def _collect_endpoint_claims(full_config):
+    specs = (
+        (
+            "output",
+            CONF_PIN,
+            lambda entry: entry[CONF_PIN],
+            lambda entry: (
+                "servo output"
+                if entry.get(CONF_MODE) == OUTPUT_MODE_SERVO
+                else "PWM output"
+            ),
         ),
-        cv.Optional(CONF_INVERTED, default=False): cv.boolean,
-    }
-)
+        (
+            "sensor",
+            CONF_SLOT,
+            lambda entry: entry[CONF_SLOT] * 10,
+            lambda _entry: "ADC sensor",
+        ),
+        (
+            "light",
+            CONF_SLOT,
+            lambda entry: entry[CONF_SLOT] * 10 + 1,
+            lambda _entry: "RGB light",
+        ),
+        (
+            "binary_sensor",
+            CONF_PIN,
+            lambda entry: entry[CONF_PIN],
+            lambda _entry: "digital input",
+        ),
+        (
+            "switch",
+            CONF_PIN,
+            lambda entry: entry[CONF_PIN],
+            lambda _entry: "digital output",
+        ),
+    )
+    claims = []
+    for rank, (domain, field, endpoint_fn, label_fn) in enumerate(specs):
+        for index, entry in enumerate(full_config.get(domain, [])):
+            if entry.get(CONF_PLATFORM) != "pbhub":
+                continue
+            entity_id = entry.get(CONF_ID, entry.get(CONF_OUTPUT_ID, "<generated>"))
+            path = [domain, index]
+            claims.append(
+                {
+                    "hub": str(entry[CONF_PBHUB_ID]),
+                    "endpoint": endpoint_fn(entry),
+                    "rank": rank,
+                    "index": index,
+                    "path": path,
+                    "path_text": _path_text(path),
+                    "field": field,
+                    "label": label_fn(entry),
+                    "entity_id": str(entity_id),
+                }
+            )
+    return sorted(
+        claims,
+        key=lambda claim: (
+            claim["hub"],
+            claim["endpoint"],
+            claim["rank"],
+            claim["index"],
+        ),
+    )
 
 
-@pins.PIN_SCHEMA_REGISTRY.register("pbhub", PBHUB_PIN_SCHEMA)
-async def pbhub_pin_to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
-    parent = await cg.get_variable(config[CONF_PBHUB])
-    cg.add(var.set_parent(parent))
-    cg.add(var.set_pin(config[CONF_NUMBER]))
-    cg.add(var.set_inverted(config[CONF_INVERTED]))
-    cg.add(var.set_flags(pins.gpio_flags_expr(config[CONF_MODE])))
-    return var
+def _final_validate(config):
+    full_config = fv.full_config.get()
+    data_key = "pbhub.endpoint_claims_validated"
+    if full_config.data.get(data_key):
+        return config
+    full_config.data[data_key] = True
+
+    claimed = {}
+    for claim in _collect_endpoint_claims(full_config):
+        key = (claim["hub"], claim["endpoint"])
+        existing = claimed.get(key)
+        if existing is None:
+            claimed[key] = claim
+            continue
+
+        raise cv.FinalExternalInvalid(
+            f"PBHUB endpoint {claim['endpoint']} on hub '{claim['hub']}' is "
+            f"claimed by both {existing['label']} '{existing['entity_id']}' at "
+            f"{existing['path_text']} and {claim['label']} "
+            f"'{claim['entity_id']}' at {claim['path_text']}",
+            path=[cv.ROOT_CONFIG_PATH, *claim["path"], claim["field"]],
+        )
+
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate

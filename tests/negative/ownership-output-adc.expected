@@ -1,0 +1,1 @@
+PBHUB endpoint 20 on hub 'test_hub' is claimed by both PWM output 'pwm_conflict' at output[0] and ADC sensor 'adc_conflict' at sensor[0]

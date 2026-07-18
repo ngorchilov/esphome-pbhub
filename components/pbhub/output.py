@@ -5,6 +5,7 @@ from esphome.const import CONF_ID, CONF_MODE, CONF_PIN
 
 from . import (
     CONF_PBHUB_ID,
+    EndpointOwner,
     PbHubComponent,
     pbhub_ns,
     validate_endpoint,
@@ -29,4 +30,10 @@ CONFIG_SCHEMA = output.FLOAT_OUTPUT_SCHEMA.extend(
 async def to_code(config):
     parent = await cg.get_variable(config[CONF_PBHUB_ID])
     var = cg.new_Pvariable(config[CONF_ID], parent, config[CONF_PIN])
+    cg.add(
+        parent.claim_endpoint(
+            config[CONF_PIN], EndpointOwner.PWM, str(config[CONF_ID])
+        )
+    )
+    cg.add(parent.register_recovery_client(var))
     await output.register_output(var, config)
