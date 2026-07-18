@@ -1,27 +1,35 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome.components import light
-from esphome.const import CONF_ID, CONF_SLOT
+import esphome.config_validation as cv
+from esphome.const import CONF_OUTPUT_ID
 
-from . import CONF_PBHUB, PbHubComponent, pbhub_ns
+from . import (
+    CONF_NUM_LEDS,
+    CONF_PBHUB_ID,
+    CONF_SLOT,
+    PbHubComponent,
+    pbhub_ns,
+    validate_led_count,
+    validate_slot,
+)
 
-CODEOWNERS = ["@ngorchilov"]   # optional, but conventional
+CODEOWNERS = ["@ngorchilov"]
 DEPENDENCIES = ["pbhub"]
 
 PbHubRGBLight = pbhub_ns.class_("PbHubRGBLight", light.LightOutput)
 
-# ----- Schema -----
-CONFIG_SCHEMA = light.RGB_LIGHT_SCHEMA.extend({
-    cv.Required("slot"): cv.int_range(min=0, max=51),  # slot number (0..51)
-    cv.Optional("led_count", default=1): cv.int_range(min=1),
-    cv.Required(CONF_PBHUB): cv.use_id(PbHubComponent),
-    cv.GenerateID(CONF_ID): cv.declare_id(PbHubRGBLight),
-})
+CONFIG_SCHEMA = light.RGB_LIGHT_SCHEMA.extend(
+    {
+        cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(PbHubRGBLight),
+        cv.Required(CONF_PBHUB_ID): cv.use_id(PbHubComponent),
+        cv.Required(CONF_SLOT): validate_slot,
+        cv.Required(CONF_NUM_LEDS): validate_led_count,
+    }
+)
 
-# ----- Codegen -----
+
 async def to_code(config):
-    parent = await cg.get_variable(config[CONF_PBHUB])
-    var = cg.new_Pvariable(config[CONF_ID], parent)
-    cg.add(var.set_slot(config["slot"]))
-    cg.add(var.set_led_count(config["led_count"]))
+    parent = await cg.get_variable(config[CONF_PBHUB_ID])
+    var = cg.new_Pvariable(config[CONF_OUTPUT_ID], parent, config[CONF_SLOT])
+    cg.add(var.set_led_count(config[CONF_NUM_LEDS]))
     await light.register_light(var, config)

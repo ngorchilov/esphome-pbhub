@@ -1,0 +1,36 @@
+esphome:
+  name: pbhub-phase1-adc
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+sensor:
+  - platform: pbhub
+    id: adc_slot_0
+    pbhub_id: test_hub
+    slot: 0
+    update_interval: 1s
+  - platform: pbhub
+    id: adc_slot_1
+    pbhub_id: test_hub
+    slot: 1
+  - platform: pbhub
+    id: adc_slot_2
+    pbhub_id: test_hub
+    slot: 2
+  - platform: pbhub
+    id: adc_slot_3
+    pbhub_id: test_hub
+    slot: 3
+  - platform: pbhub
+    id: adc_slot_4
+    pbhub_id: test_hub
+    slot: 4
+  - platform: pbhub
+    id: adc_slot_5
+    pbhub_id: test_hub
+    slot: 5

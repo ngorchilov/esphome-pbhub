@@ -1,0 +1,21 @@
+esphome:
+  name: pbhub-phase1-rgb
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+light:
+  - platform: pbhub
+    id: rgb_one_led
+    pbhub_id: test_hub
+    slot: 0
+    num_leds: 1
+  - platform: pbhub
+    id: rgb_max_leds
+    pbhub_id: test_hub
+    slot: 5
+    num_leds: 74

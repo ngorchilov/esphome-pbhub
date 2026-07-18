@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-invalid-endpoint-49
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: invalid_output
+    pbhub_id: test_hub
+    pin: 49
+    mode: pwm

@@ -1,0 +1,71 @@
+esphome:
+  name: pbhub-phase1-endpoints
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: endpoint_0
+    pbhub_id: test_hub
+    pin: 0
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_1
+    pbhub_id: test_hub
+    pin: 1
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_10
+    pbhub_id: test_hub
+    pin: 10
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_11
+    pbhub_id: test_hub
+    pin: 11
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_20
+    pbhub_id: test_hub
+    pin: 20
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_21
+    pbhub_id: test_hub
+    pin: 21
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_30
+    pbhub_id: test_hub
+    pin: 30
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_31
+    pbhub_id: test_hub
+    pin: 31
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_40
+    pbhub_id: test_hub
+    pin: 40
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_41
+    pbhub_id: test_hub
+    pin: 41
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_50
+    pbhub_id: test_hub
+    pin: 50
+    mode: pwm
+  - platform: pbhub
+    id: endpoint_51
+    pbhub_id: test_hub
+    pin: 51
+    mode: pwm

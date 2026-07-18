@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-legacy-adc-shape
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+sensor:
+  - platform: pbhub
+    id: legacy_adc
+    pin:
+      pbhub: test_hub
+      number: 0

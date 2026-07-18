@@ -359,9 +359,11 @@ Create one shared module-level implementation for:
 - `validate_endpoint`: split with `divmod(value, 10)` and require channel `0..5`
   plus index `0 or 1`.
 - `validate_led_count`: integer `1..74`.
-- required output mode: exact enum `pwm` or `servo`.
-- servo output transform: require `inverted: false`, `min_power: 0%`,
-  `max_power: 100%` and `zero_means_zero: true`; reject incompatible values.
+- required output mode: exact enum `pwm` during Phase 1, extended to `pwm` or
+  `servo` when direct-pulse servo support lands in Phase 5.
+- servo output transform, added with Phase 5: require `inverted: false`,
+  `min_power: 0%`, `max_power: 100%` and `zero_means_zero: true`; reject
+  incompatible values.
 - LED timing mode: exact enum/integer 0 or 1.
 
 Error text should include the endpoint formula and accepted values. Platform
@@ -668,7 +670,9 @@ Acceptance:
 
 Changes:
 
-- Add exact slot/endpoint/count/mode validators.
+- Add exact slot, endpoint and count validators.
+- Require an explicit `mode: pwm` on the output platform. Reject a premature
+  `mode: servo` until its direct-pulse implementation lands in Phase 5.
 - Add positive and negative YAML fixtures under `tests/`.
 - Add a non-hidden local runner under `tools/`.
 - Pin the local validation environment to ESPHome 2026.7.0 without committing
@@ -678,8 +682,11 @@ Acceptance:
 
 - Every valid endpoint passes.
 - Invalid in-range-looking values such as 2, 19 and 49 fail with useful errors.
-- Invalid slots, counts and modes fail.
-- Core-only fixture compiles without optional entity domains.
+- Invalid slots and counts, a missing or unknown output mode and premature
+  `mode: servo` fail with useful errors.
+- Pre-v2 nested output, ADC and RGB configuration shapes fail without aliases.
+- The core-only fixture compiles without optional entity domains, and each
+  Phase 1 PWM, ADC and RGB validation fixture also compiles.
 
 ### Phase 2 - Core protocol and transport rewrite
 
@@ -755,7 +762,7 @@ Acceptance:
 
 Changes:
 
-- Add `mode: servo` to the output platform.
+- Extend the output-mode validator and code generation with `mode: servo`.
 - Convert standard ESPHome servo frame fractions to microseconds.
 - Implement digital-low detach.
 

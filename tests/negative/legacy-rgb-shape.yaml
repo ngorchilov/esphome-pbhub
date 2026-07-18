@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-legacy-rgb-shape
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+light:
+  - platform: pbhub
+    id: legacy_light
+    pbhub: test_hub
+    slot: 0
+    led_count: 1

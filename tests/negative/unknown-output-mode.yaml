@@ -1,0 +1,16 @@
+esphome:
+  name: pbhub-unknown-output-mode
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: invalid_output
+    pbhub_id: test_hub
+    pin: 0
+    mode: variable

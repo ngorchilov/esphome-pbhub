@@ -1,10 +1,6 @@
 #include "pbhub.h"
 #include "esphome/core/log.h"
 
-// #if !defined(USE_OUTPUT)
-// #warning "pbhub.cpp: USE_OUTPUT not defined in esphome/components/pbhub/pbhub.cpp"
-// #endif
-
 namespace esphome
 {
   namespace pbhub
@@ -214,13 +210,6 @@ namespace esphome
       parent_->digital_write(pin_, send);
     }
 
-    std::string PbHubGPIOPin::dump_summary() const
-    {
-      char buffer[64];
-      this->dump_summary(buffer, sizeof(buffer));
-      return std::string(buffer);
-    }
-
     size_t PbHubGPIOPin::dump_summary(char *buffer, size_t len) const
     {
       return snprintf(buffer, len, "pbhub pin %u (inverted=%s)", pin_, inverted_ ? "yes" : "no");
@@ -229,7 +218,7 @@ namespace esphome
     // -----------------------------------------------------------------------------
     // PWM wrapper
     // -----------------------------------------------------------------------------
-    // #ifdef USE_OUTPUT
+#ifdef USE_OUTPUT
     void PbHubPWMPin::write_state(float state)
     {
       if (!parent_)
@@ -239,7 +228,7 @@ namespace esphome
       uint8_t idx = parent_->idx_from_pin(pin_);
       parent_->set_pwm(slot, idx, duty);
     }
-    // #endif
+#endif
 
     // -----------------------------------------------------------------------------
     // ADC wrapper
@@ -256,21 +245,6 @@ namespace esphome
       publish_state(val);
     }
 #endif
-    // -----------------------------------------------------------------------------
-    // Servo wrapper
-    // -----------------------------------------------------------------------------
-    // #ifdef USE_OUTPUT
-    void PbHubServo::write_state(float state)
-    {
-      if (!parent_)
-        return;
-      uint8_t angle = static_cast<uint8_t>(state * 180.0f);
-      uint8_t slot = parent_->slot_from_pin(pin_);
-      uint8_t idx = parent_->idx_from_pin(pin_);
-      parent_->set_servo_angle(slot, idx, angle);
-    }
-    // #endif
-
     // -----------------------------------------------------------------------------
     // RGB Light wrapper
     // -----------------------------------------------------------------------------

@@ -3,18 +3,14 @@
 #include "esphome/core/component.h"
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/core/gpio.h"
-// #ifdef USE_OUTPUT
+#ifdef USE_OUTPUT
 #include "esphome/components/output/float_output.h"
-// #endif
+#endif
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
 #endif
 #ifdef USE_LIGHT
 #include "esphome/components/light/light_output.h"
-#endif
-
-#if !defined(USE_OUTPUT)
-#warning "pbhub.cpp: USE_OUTPUT not defined in esphome/components/pbhub/pbhub.h"
 #endif
 
 namespace esphome
@@ -161,11 +157,7 @@ namespace esphome
       void pin_mode(gpio::Flags flags) override;
       bool digital_read() override;
       void digital_write(bool value) override;
-      // ESPHome 2026.7 changed GPIOPin::dump_summary() to use a caller-provided
-      // buffer. Keep both overloads so this component remains compatible with
-      // older releases as well.
-      std::string dump_summary() const;
-      size_t dump_summary(char *buffer, size_t len) const;
+      size_t dump_summary(char *buffer, size_t len) const override;
       gpio::Flags get_flags() const override { return flags_; }
 
       void set_parent(PbHubComponent *p) { parent_ = p; }
@@ -185,21 +177,17 @@ namespace esphome
     // ----------------------------------------------------
 #ifdef USE_OUTPUT
     class PbHubPWMPin : public output::FloatOutput
-#else
-    class PbHubPWMPin
-#endif
     {
     public:
       PbHubPWMPin(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
 
-#ifdef USE_OUTPUT
     protected:
       void write_state(float state) override;
-#endif
 
       PbHubComponent *parent_;
       uint8_t pin_;
     };
+#endif
 
     // ----------------------------------------------------
     // ADC Sensor
@@ -217,27 +205,6 @@ namespace esphome
       uint8_t slot_;
     };
 #endif // USE_SENSOR
-
-    // ----------------------------------------------------
-    // Servo Output
-    // ----------------------------------------------------
-#ifdef USE_OUTPUT
-    class PbHubServo : public output::FloatOutput
-#else
-    class PbHubServo
-#endif
-    {
-    public:
-      PbHubServo(PbHubComponent *parent, uint8_t pin) : parent_(parent), pin_(pin) {}
-
-#ifdef USE_OUTPUT
-    protected:
-      void write_state(float state) override;
-#endif
-
-      PbHubComponent *parent_;
-      uint8_t pin_;
-    };
 
     // ----------------------------------------------------
     // RGB Light

@@ -1,0 +1,17 @@
+esphome:
+  name: pbhub-legacy-output-shape
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: legacy_output
+    pin:
+      pbhub: test_hub
+      number: 0
+    mode: pwm
