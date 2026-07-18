@@ -1121,6 +1121,8 @@ Status: pending real-hardware validation.
 
 Changes:
 
+- Acquire and prepare the hardware in the
+  [validation equipment checklist](hardware-validation-equipment.md).
 - Execute the hardware matrix below on ESP32 with ESP-IDF.
 - Record measured values separately from calculated firmware values.
 - Fix host-side issues exposed by measurement.
@@ -1227,6 +1229,9 @@ dotfiles or local workflow notes. A hosted CI service can be revisited only if t
 repository policy changes explicitly.
 
 ## Required real-hardware matrix
+
+The required devices, instruments, loads and fixtures are listed in the
+[hardware validation equipment checklist](hardware-validation-equipment.md).
 
 Execute this matrix on ESP32 with ESP-IDF. Arduino compilation is a
 separate compatibility signal and does not become a runtime or hardware-support

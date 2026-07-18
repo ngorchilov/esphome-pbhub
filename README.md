@@ -508,6 +508,7 @@ sources of truth are:
 
 - [PBHUB v1.1 internal firmware protocol datasheet](docs/pbhub-firmware-protocol.md)
 - [ESPHome PBHUB v2 implementation plan](docs/v2-implementation-plan.md)
+- [hardware validation equipment checklist](docs/hardware-validation-equipment.md)
 - [v2 clean-break notice](docs/v2-clean-break.md)
 - [validation fixtures and commands](tests/README.md)
 
