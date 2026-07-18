@@ -17,7 +17,8 @@ This phase changes documentation only. It does not yet change component behavior
    light through native ESPHome entities.
 5. Keep the component efficient enough that I2C traffic does not unnecessarily
    worsen the firmware's PWM and servo jitter.
-6. Target only stock PBHUB application firmware version 2.
+6. Target the audited stock PBHUB application protocol reporting firmware
+   version 2.
 7. Target the public APIs of ESPHome 2026.7.0 and require every selected
    framework/target fixture to compile under that version.
 8. Publish only portable product and implementation documentation. Exclude
@@ -44,15 +45,17 @@ This phase changes documentation only. It does not yet change component behavior
 | Digital input | Native polling `binary_sensor` | A boolean GPIOPin API cannot report I2C failure and generic GPIO polling is excessively frequent |
 | Digital output | Native `switch` only | The clean v2 API does not retain the old GPIOPin abstraction |
 | ADC | Native raw sensor configured by `slot: 0..5` | ADC exists only on signal A, not on an arbitrary endpoint |
-| PWM | `output` mode with documented fixed frequency near 392 Hz | Application firmware version 2 has no frequency control |
+| PWM | `output` mode with fixed frequency near 392 Hz; use digital low/high for encoded duties 0/255 | Firmware version 2 has no frequency control, and its PWM extrema have edge-state defects |
 | Servo | Separate `output` mode using the direct pulse register | Application firmware version 2 has a genuine 50 Hz servo generator; ordinary PWM is not equivalent |
 | RGB | One uniform RGB light per configured channel/strip | Every indexed command immediately transmits a strip prefix, making addressable effects inefficient |
 | RGB brightness | Scale on the ESP host; keep STM32 brightness at 255 | Firmware brightness is nonlinear and applies one color write late |
 | Endpoint conflicts | Reject duplicate ownership | Firmware commands silently replace the current mode of a physical signal |
 | Dangerous globals | Excluded | Address mutation wears flash, and reset/IAP is outside the ESPHome component's scope |
-| Firmware target | Application firmware version exactly 2 | No behavior is assumed for v1, future or unknown firmware |
+| Firmware target | Audited stock protocol reporting application version exactly 2 | The version register is a compatibility guard, not authentication of the exact factory binary |
 | Transport API | ESPHome 2026.7.0 `read_register`/`write_register`, returning `i2c::ErrorCode` | These current APIs directly match the PBHUB register transaction model |
 | ESPHome target | Exactly 2026.7.0 | No cross-version shims or historical API branches are required |
+| Reported output state | Switch publishes after successful transport; light reports ESPHome desired state | ESPHome light state is published before `LightOutput::write_state()`, and firmware has no physical feedback |
+| Recovery | Invalidate verification and applied-state caches after transport loss; rate-limit re-probe and replay | Only the I2C address persists across a hub reset |
 
 ## Current implementation gap analysis
 
@@ -107,11 +110,16 @@ irreducible limitation.
 ### 5. Write failures are logged but not reflected in entities
 
 Most write methods ignore the result after logging it. Switch/light/output state
-can appear updated even when the hub did not accept the transaction.
+can appear updated even when the command was not transported successfully.
+Conversely, an I2C success still does not prove semantic acceptance or the
+physical output level because firmware v2 has no such acknowledgement.
 
-v2 action: centralize result handling. Cache a new output only after a successful
-write, publish switch state only after success and retain a retryable desired state
-where the ESPHome entity API permits it.
+v2 action: centralize result handling and keep desired state separate from the
+last successfully transported command. Publish switch state only after transport
+success. ESPHome's light entity necessarily remains desired logical state because
+it publishes before `LightOutput::write_state()`; transport failures preserve
+that desired state for replay and surface through parent communication health.
+Neither entity is physical feedback.
 
 ### 6. Generic GPIO input is the wrong abstraction
 
@@ -156,14 +164,18 @@ v2 action: keep the core transport independent and compile entity wrappers only
 under their matching `USE_*` guards. Remove warning directives and dummy feature
 classes.
 
-### 10. Setup does not establish device health
+### 10. Setup and recovery do not establish or restore device state
 
 Setup currently logs an address but does not verify that the hub responds or
-cache firmware capabilities. Repeated read failures can also flood warnings.
+cache firmware capabilities. Repeated read failures can also flood warnings. A
+hub reset loses every configured mode and value except the I2C address, while
+host-side caches can still make those values look applied.
 
-v2 action: require a successful application-version read of exactly `2`, report a
-useful component state, count consecutive failures, throttle repeated logs and
-clear warnings after recovery.
+v2 action: require a successful application-version read of exactly `2`, report
+a useful component state, count consecutive failures and throttle repeated logs.
+On transport loss, invalidate firmware verification and every applied-state
+cache. After a rate-limited successful re-probe, restore configured global and
+RGB state, then replay desired entity outputs before clearing the warning.
 
 ### 11. Documentation disagrees with the actual component
 
@@ -201,6 +213,8 @@ pbhub:
 
 If omitted, v2 leaves the firmware default untouched. If configured, the value
 must be 0 or 1 and the hub must report application firmware version exactly 2.
+That response selects the audited protocol contract; it does not authenticate
+the exact factory binary.
 
 ### Digital input
 
@@ -230,7 +244,8 @@ switch:
 ```
 
 The default must be safe-off. Restoring any other state is explicit and occurs
-only after the hub is available.
+only after the hub is available. Published state represents the last
+successfully transported command, not physical output feedback.
 
 ### ADC
 
@@ -259,7 +274,9 @@ output:
 ```
 
 `mode: pwm` converts `0.0..1.0` to a rounded and clamped duty byte `0..255`.
-Frequency remains fixed by the STM32 firmware at a calculated nominal 392.16 Hz.
+Encoded duty 0 uses a digital-low command, encoded duty 255 uses digital high,
+and only 1 through 254 use the PWM register. Frequency for intermediate levels
+remains fixed by the STM32 firmware at a calculated nominal 392.16 Hz.
 
 ### Servo
 
@@ -300,17 +317,20 @@ light:
 ```
 
 This is one uniform RGB light spanning the configured LEDs. It is not an
-addressable light. Setup writes LED count and firmware brightness 255. Updates
-host-scale on/off, brightness and RGB, then issue one safe fill from index 0 for
-`num_leds` entries.
+addressable light. Setup writes LED count and firmware brightness 255. Each
+update resolves on/off, brightness and RGB on the host, then issues one safe fill
+from index 0 across exactly `num_leds` entries. Detected transport recovery
+replays count and firmware brightness before the desired light state.
 
 ## Support boundary
 
 v2 is a deliberate clean break from the existing component. Correctness and a
 clear API take precedence over preserving prototype behavior.
 
-1. The only device contract is the stock PBHUB application protocol reporting
-   firmware version `2` from register `0xFE`.
+1. The only device contract is the audited stock PBHUB application protocol
+   reporting firmware version `2` from register `0xFE`. This self-reported byte
+   does not authenticate the exact factory image or modified firmware that keeps
+   the same value.
 2. The only software target is ESPHome 2026.7.0. Use its public APIs directly;
    do not add cross-version shims or version conditionals.
 3. Require an explicit `mode` for every PBHUB output. Do not infer PWM or servo
@@ -397,7 +417,7 @@ components/pbhub/
 - `pbhub_protocol.h`: scoped constants, `Endpoint`, register construction and
   endian helpers with no ESPHome entity dependency.
 - `pbhub.h/.cpp`: I2C transport, device health, verified firmware-version state,
-  endpoint ownership and typed protocol operations.
+  recovery replay, endpoint ownership and typed protocol operations.
 - `pbhub_entities.h/.cpp`: thin feature-guarded ESPHome entity wrappers.
 - Python files: schemas, ownership validation and code generation.
 
@@ -436,8 +456,11 @@ bool fill_leds(uint8_t slot, uint16_t start, uint16_t count,
 Out-parameters ensure a valid zero/false remains distinct from failure. Every
 public method validates again at runtime before constructing a register.
 
-This success/failure boundary covers host-visible transport results. It cannot
-detect the firmware's stale-response ADC timeout when I2C itself succeeds.
+For writes, `true` means that the exact validated command was transported
+without an ESPHome I2C error; it is not physical-state confirmation. The
+`write_pwm()` operation selects digital low/high for duties 0/255 internally.
+This success/failure boundary cannot detect the firmware's stale-response ADC
+timeout when I2C itself succeeds.
 
 ### ESPHome 2026.7.0 I2C transport
 
@@ -447,7 +470,9 @@ version conditional is required.
 
 Every read selects its register and requests exactly the expected response size.
 No method performs a bare continuation read. Every multi-byte value is assembled
-explicitly as little-endian.
+explicitly as little-endian. Protocol tests assert the exact write payload and
+read response length of every typed operation because firmware length handling
+is inconsistent.
 
 ### Device health
 
@@ -456,22 +481,81 @@ The parent owns communication health:
 - count consecutive failures;
 - log the first failure with operation/register/error context;
 - throttle repeated messages;
-- set a component warning after a small threshold, initially three failures;
-- clear the counter and warning on a successful transaction;
+- set a component warning immediately when a `READY` parent loses transport;
+- clear the consecutive-failure counter on a successful transaction and clear
+  the warning only after any required recovery replay completes;
 - expose total/recent failure counters to verbose logs, not as mandatory Home
   Assistant entities;
-- never mark an entity's cached output successful until its I2C write succeeds.
+- treat I2C success as successful command transport, not semantic acceptance or
+  physical-state confirmation;
+- never mark an applied-state cache current until its I2C write succeeds.
 
 Setup and recovery probe register `0xFE`. Until a successful response reports
-version `2`, the parent suppresses feature commands and retries after transport
-failures. A successfully read value other than `2` is unsupported and marks the
-component failed with a clear diagnostic. There is no firmware-v1 fallback.
+version `2`, the parent suppresses feature commands. A successfully read value
+other than `2` is unsupported and marks the component failed with a clear
+diagnostic. A value of `2` is a self-reported protocol guard, not authentication
+of the exact stock binary. There is no firmware-v1 fallback.
+
+The first transport failure makes hub state uncertain. The parent immediately
+invalidates firmware verification and every applied-state cache, retains desired
+entity state, and schedules a rate-limited version probe rather than retrying on
+every loop pass. After `0xFE` again reports 2, recovery proceeds in this order:
+
+1. restore configured global LED timing, if present;
+2. restore each RGB light's LED count and firmware brightness 255;
+3. replay the desired state of switches, PWM, servo and RGB entities; and
+4. resume scheduled reads and clear the warning after recovery completes.
+
+Only the I2C address persists across a hub reset. A reset that starts and
+finishes entirely between host transactions can be invisible because firmware
+exposes no reset counter. Version probing cannot detect that case when the hub
+returns reporting 2; documentation must state this irreducible limitation.
+
+### Recovery orchestration
+
+Represent parent health with explicit `UNVERIFIED`, `RECOVERING`, `READY` and
+`UNSUPPORTED` states. Startup begins unverified. A transport failure from any
+operation returns the parent to `UNVERIFIED`; an unsupported version is terminal
+until the controller restarts.
+
+Entity wrappers register through a small core recovery-client interface that has
+no dependency on ESPHome entity domains. The interface lets the parent:
+
+- invalidate a client's applied-state cache while preserving desired state;
+- restore configuration such as RGB count and firmware brightness; and
+- replay desired output state after all configuration is restored.
+
+Code generation registers every client before ESPHome calls component setup. The
+parent uses `setup_priority::IO`, after the I2C bus and before hardware-facing
+entity setup. During initial setup it probes the version, applies configured
+global timing and runs the client configuration pass. Each entity then records
+its initial desired state and applies it only if the parent is `READY`. If the
+probe or configuration failed, entities retain desired state without issuing
+feature commands and the normal loop-driven recovery sequence performs the first
+application later.
+
+The parent writes its optional global LED timing first, runs one configuration
+pass across clients, then one output-state pass. A failure during any pass stops
+recovery, invalidates applied state again and schedules another bounded retry.
+No recovery loop performs immediate unbounded retries. Normal scheduled reads
+and user-triggered feature commands run only in `READY`; commands received while
+recovering update desired state and wait for replay.
+
+Local argument-validation failures never enter transport recovery because they
+do not make the hub's existing state uncertain.
 
 ### Output caching and traffic control
 
-Cache the last successfully written digital, PWM, servo and RGB values. Skip an
-identical write only after a confirmed prior success. A failed write leaves the
-cache unchanged so the same desired value can retry.
+Keep desired state separate from the last successfully transported digital, PWM,
+servo and RGB command. Every applied-state cache starts unknown. Skip an
+identical write only while the corresponding applied-state cache is known. A
+failed write retains desired state, makes applied state unknown and enters the
+parent recovery path so that the command can replay.
+
+The PWM typed operation accepts the encoded duty byte but sends digital low for
+0, digital high for 255 and the firmware PWM register only for 1 through 254.
+The applied cache includes the effective command mode so transitions between a
+digital extremum and intermediate PWM are never incorrectly skipped.
 
 Scheduled input/ADC reads should be serialized by the parent and, where practical,
 staggered so several equal polling intervals do not create one burst. Start with
@@ -503,9 +587,15 @@ remains.
 ### Switch
 
 - Default restore mode is safe-off.
-- Inversion is applied before transport.
-- A successful write publishes the requested logical state.
+- ESPHome applies inversion before `write_state(bool)`. Store and replay that
+  transport-level boolean, then pass the same value to `publish_state()` after a
+  successful write so inversion is not applied twice.
+- A successfully transported write publishes the requested logical state as
+  commanded state, not confirmed physical feedback.
 - A failed write leaves state unchanged and marks communication health.
+- Keep the normal optimistic toggle UI (`assumed_state() == false`); the
+  documented entity contract is commanded state even though no physical
+  readback exists.
 
 ### ADC sensor
 
@@ -521,7 +611,10 @@ remains.
 ### PWM output
 
 - Clamp input to `0.0..1.0`, round to `0..255`.
-- Skip a repeated successful value.
+- Send encoded 0 as digital low, encoded 255 as digital high and only 1 through
+  254 through the PWM register.
+- Cache both encoded value and effective command mode; skip only a repeated,
+  successfully transported value while applied state remains known.
 - Advertise fixed calculated nominal frequency, not a configurable frequency.
 - Override ESPHome 2026.7.0's `update_frequency(float)` hook, leave the fixed
   frequency unchanged and emit one throttled warning. Do not claim RTTTL support.
@@ -546,14 +639,18 @@ remains.
   timing mode once, then send black if restoration policy requires it.
 - On update: resolve on/off, brightness and RGB on the host; send one bounded fill
   at start 0 for exactly `num_leds`.
-- Cache the final scaled RGB triple after successful transport.
+- Keep the desired final light state separately and cache the scaled RGB triple
+  only as the last successfully transported fill.
+- ESPHome publishes the light's desired logical state before this output writes;
+  on failure retain it for replay and rely on the parent warning rather than
+  claiming that the light state confirms transport or hardware.
 - State clearly that all configured LEDs share one color.
 
 ## Implementation phases and acceptance criteria
 
 ### Phase 0 - Research and design
 
-Status: complete on the `v2` branch when these documents are reviewed.
+Status: complete on the `v2` branch after the final firmware-audit resync.
 
 Deliverables:
 
@@ -590,19 +687,28 @@ Changes:
 
 - Introduce protocol types and exact register construction.
 - Replace value-or-error conflation with boolean success plus out-parameters.
-- Add firmware probing, health counters, warning recovery and log throttling.
+- Add the parent health state machine, recovery-client interface, firmware
+  probing, health counters, rate-limited retries and applied-state invalidation.
 - Add endpoint ownership claims.
 - Remove unsafe base fallback and duplicate schema fields.
 
 Acceptance:
 
-- Unit-level register tests cover all six channel bases and all operations.
+- Unit-level register tests cover all six channel bases, all operations and the
+  exact payload/response length of every transaction.
 - No invalid endpoint can produce an I2C register.
 - Simulated host-detected transport failure does not become a valid reading.
 - A simulated firmware-version response of 2 enables operation; any other
   successful version response is rejected without issuing feature commands.
 - An unreadable version is treated as a recoverable transport failure and is
-  retried without issuing feature commands.
+  retried at a bounded interval without issuing feature commands.
+- A transport failure invalidates verification and all applied-state caches.
+- Fake recovery-client tests prove that successful re-probing runs all
+  configuration callbacks before output-state callbacks and that a failed
+  callback returns to bounded `UNVERIFIED` recovery without normal feature
+  traffic.
+- Initial-order tests prove the `setup_priority::IO` parent probes and completes
+  its configuration pass before an entity attempts its initial output state.
 - Core-only and multi-hub fixtures configure and compile.
 
 ### Phase 3 - Native digital entities
@@ -618,7 +724,11 @@ Acceptance:
 
 - Input failure never flips an inverted sensor to true.
 - Polling frequency matches configuration and does not run every main-loop pass.
-- Switch only publishes successful writes.
+- Switch publishes only successfully transported writes and retains a failed
+  request as desired state for recovery replay.
+- Detected recovery replays a switch's desired state before publishing it.
+- Normal and inverted switches transport/replay the correct raw boolean and
+  publish the correct logical state without double inversion.
 - Duplicate digital ownership fails configuration.
 
 ### Phase 4 - ADC and fixed PWM
@@ -627,13 +737,18 @@ Changes:
 
 - Replace pin-shaped ADC schema with slot.
 - Publish raw ADC only on successful reads.
-- Rebuild PWM conversion, caching and fixed-frequency reporting.
+- Rebuild PWM conversion, mode-aware caching and fixed-frequency reporting.
 
 Acceptance:
 
 - All six ADC slots produce the correct register and read two little-endian bytes.
 - Valid ADC zero publishes as zero; I2C failure does not.
-- PWM edge values map predictably to bytes 0 and 255.
+- PWM encoded 0 sends digital low, encoded 255 sends digital high and values 1
+  through 254 use the correct PWM register and duty byte.
+- Transitions between a digital extremum and intermediate PWM are not skipped by
+  the applied-state cache.
+- Detected recovery replays the desired encoded PWM level using the same
+  digital-extrema rule.
 - RTTTL is no longer shown as supported.
 
 ### Phase 5 - Servo mode
@@ -651,6 +766,7 @@ Acceptance:
 - Invalid nonzero pulse fractions fail locally and do not change hub mode.
 - Inverted or power-remapped servo output configurations fail validation, and
   zero remains a detach command.
+- Detected recovery replays the desired servo level or detach state.
 
 ### Phase 6 - RGB rebuild
 
@@ -665,8 +781,12 @@ Acceptance:
 
 - Counts 1 and 74 pass; 0 and 75 fail.
 - Every generated fill satisfies `start + count <= configured_count <= 74`.
+- An invalid range fails locally and produces no I2C transaction.
 - Brightness never uses the STM32's defective scaler below 255.
+- Host-scaled RGB byte boundaries 0, 127, 128, 254 and 255 are encoded exactly.
 - The light turns fully off with an explicit black fill.
+- Detected recovery restores timing/count/brightness before replaying the
+  desired fill; a failed step does not advance to output replay.
 
 ### Phase 7 - Documentation and ESPHome 2026.7.0 validation
 
@@ -674,7 +794,8 @@ Changes:
 
 - Rewrite README installation and all entity examples.
 - Publish a concise clean-break notice and the complete new YAML reference.
-- Document firmware version, PWM, servo, RGB and voltage limitations.
+- Document the self-reported firmware-version guard, commanded-state semantics,
+  undetectable between-transaction reset, PWM, servo, RGB and voltage limits.
 - Run the complete framework/target matrix under ESPHome 2026.7.0.
 
 Acceptance:
@@ -698,7 +819,8 @@ Acceptance:
 
 - No unresolved high-risk host defect.
 - PWM/servo limitations are measured and documented.
-- Disconnect/reconnect behavior does not publish false states.
+- Disconnect/reconnect behavior does not publish false readings and restores
+  desired outputs after verified recovery.
 - The representative deployment runs successfully on the clean v2 API.
 - Main remains untouched until the v2 branch is explicitly approved for merge.
 
@@ -764,7 +886,8 @@ repository policy changes explicitly.
 - Read and write signal A and B on all six channels.
 - Verify inversion and safe startup output state.
 - Disconnect and reconnect the hub while polling; confirm last state is retained
-  during failure and communication warning clears on recovery.
+  during failure, desired output state replays only after version verification
+  and the communication warning clears after recovery completes.
 - Measure the shortest reliably detected input pulse at several polling intervals.
 
 ### ADC
@@ -776,11 +899,12 @@ repository policy changes explicitly.
 
 ### PWM
 
-- Measure duty values 0, 1, 127, 254 and 255.
-- Measure nominal frequency and period variation.
-- Look specifically for a duty-zero high glitch.
-- Exercise PWM re-entry after digital, ADC, servo and RGB mode changes.
-- Test the source-confirmed stale-state/duty-255 sequence.
+- Verify encoded duties 0 and 255 use stable digital low and high without
+  writing the PWM registers.
+- Measure nominal frequency, duty and period variation at encoded values 1, 127
+  and 254.
+- Exercise PWM re-entry after digital extrema, ADC, servo and RGB mode changes,
+  looking for a missing or stretched first pulse.
 
 ### Servo
 
@@ -791,18 +915,26 @@ repository policy changes explicitly.
 
 ### RGB
 
-- Verify R/G/B order, off and host-side low/mid/full brightness.
+- Verify R/G/B order, off and host-side scaling at encoded byte values 0, 127,
+  128, 254 and 255.
 - Test counts 1, an intermediate value and 74.
 - Test timing modes 0 and 1 on representative LED families.
 - Confirm no command generated by the component can exceed the safe fill bound.
+- Confirm rejected indices/ranges produce no I2C transaction and do not take
+  signal B away from its configured owner.
 
 ### Bus and power
 
 - Test 100 kHz and 400 kHz I2C.
 - Test direct bus and multiplexer routing.
 - Test controller-first, hub-first and simultaneous power-up.
-- Test hub reset and reconnect without rebooting the ESP controller.
-- Observe PWM/servo outputs during induced I2C errors and recovery.
+- Interrupt a transaction, induce bus errors and look specifically for repeated
+  firmware-side 500 ms recovery stalls.
+- Test hub reset and reconnect without rebooting the ESP controller; verify
+  rate-limited re-probing, configuration ordering and desired-state replay.
+- Reset an output-only hub entirely between host transactions and document that
+  the unchanged version byte cannot prove the reset occurred.
+- Observe PWM/servo outputs during induced I2C errors and recovery replay.
 
 ## Risk register
 
@@ -813,6 +945,9 @@ repository policy changes explicitly.
 | RGB traffic blocks software outputs | Long pulse or visible flicker | Uniform/coalesced fills, rate limit, hardware stress test |
 | Firmware invalid-value side effects | Unexpected output | Validate every range before I2C write |
 | Hub disconnect becomes a false alarm | Unsafe automation | Preserve state on read failure and expose parent warning |
+| Logical output state is mistaken for physical confirmation | Misleading entity state | Document switch as transported command and light as desired state; retain no false readback claim |
+| Recovery probing or firmware stalls flood the bus | Repeated disruption | Rate-limit probes; test interrupted writes and repeating 500 ms stalls |
+| Hub resets entirely between transactions | Applied state can be lost without detection | Document absent reset counter; validate known-failure replay and output-only reset behavior |
 | Restore mode energizes an output | Physical hazard | Safe-off default and explicit opt-in restoration |
 | Public docs leak machine-local context | Privacy/repository hygiene failure | Portable examples and automated privacy scan |
 
@@ -823,9 +958,14 @@ The overhaul is complete only when all of the following are true:
 - Protocol helpers cannot encode an invalid endpoint or unsafe RGB range.
 - No feature command is sent before application firmware version `2` is
   verified.
+- Transport loss invalidates verification and applied-state caches; verified
+  recovery restores configuration before replaying desired outputs.
 - No legacy PBHUB schema, alias, GPIOPin adapter or compatibility API remains.
 - Every entity keeps host-detected transport failure separate from valid state;
   the undetectable firmware ADC-staleness case is documented explicitly.
+- Switch state is described as a successfully transported command, light state
+  as ESPHome desired state, and neither as physical feedback; the undetectable
+  between-transaction hub-reset case is documented explicitly.
 - Endpoint conflicts fail before normal operation.
 - Digital, ADC, PWM, servo and uniform RGB behavior matches the datasheet.
 - Public examples validate and compile under ESPHome 2026.7.0 for every claimed

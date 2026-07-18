@@ -5,8 +5,8 @@ It describes the behavior implemented by M5Stack's STM32 firmware, including
 behavior that is missing from the published register sheet and behavior that
 appears to be defective.
 
-Firmware redesign and its engineering backlog are maintained separately in the
-[firmware repository's counterpart document](https://github.com/ngorchilov/M5Unit-PbHub-Internal-FW/blob/main/docs/pbhub-firmware-protocol.md).
+Firmware redesign, flashing and recovery engineering are maintained separately
+in the firmware project and are outside this repository's scope.
 
 ## Scope and evidence
 
@@ -21,7 +21,8 @@ Research baseline:
 - Factory image:
   [`U041-B_Unit-Pbhub-v1.1_STM32_V2_JIE_20250312_0x0.hex`](https://github.com/m5stack/M5Unit-PbHub-Internal-FW/blob/6de9c0a9f2a3bffdbf17313d3a5aa933228ee772/firmware/U041-B_Unit-Pbhub-v1.1_STM32_V2_JIE_20250312_0x0.hex).
 - Published protocol: M5Stack's
-  [V2 I2C protocol sheet](https://github.com/m5stack/M5Unit-PbHub/blob/main/docs/V2/PbHub_V2_I2C_Protocol.pdf).
+  [V2 I2C protocol sheet](https://github.com/m5stack/M5Unit-PbHub/blob/1974058947d5556e62957681082e0c082da14071/docs/V2/PbHub_V2_I2C_Protocol.pdf),
+  pinned to the same revision as the host reference.
 - Host reference: M5Stack's
   [Arduino library](https://github.com/m5stack/M5Unit-PbHub/tree/1974058947d5556e62957681082e0c082da14071).
 - Hardware reference: M5Stack's
@@ -42,6 +43,11 @@ the source behavior for component implementation. Hardware measurements should
 be added later without erasing the distinction between measured and derived
 facts.
 
+The upstream repository does not provide a reproducible build-and-merge path
+that proves its application source is byte-identical to the supplied factory
+image. Application behaviors below are therefore source-confirmed, not claims of
+binary identity with every shipped unit.
+
 ### Upstream source map
 
 - Register decoding, mode changes, ADC filtering, PWM/servo loop and global
@@ -57,8 +63,6 @@ facts.
   [`code/Core/Inc/ws2812.h`](https://github.com/m5stack/M5Unit-PbHub-Internal-FW/blob/6de9c0a9f2a3bffdbf17313d3a5aa933228ee772/code/Core/Inc/ws2812.h).
 - Persistent I2C address storage:
   [`code/Core/Src/flash.c`](https://github.com/m5stack/M5Unit-PbHub-Internal-FW/blob/6de9c0a9f2a3bffdbf17313d3a5aa933228ee772/code/Core/Src/flash.c).
-- Application linker memory region:
-  [`code/MDK-ARM/PbHub.uvprojx`](https://github.com/m5stack/M5Unit-PbHub-Internal-FW/blob/6de9c0a9f2a3bffdbf17313d3a5aa933228ee772/code/MDK-ARM/PbHub.uvprojx).
 - I2C IAP bootloader:
   [`code/bootloader/IAPTest_LL/IAPTest_LL/Core/Src/main.c`](https://github.com/m5stack/M5Unit-PbHub-Internal-FW/blob/6de9c0a9f2a3bffdbf17313d3a5aa933228ee772/code/bootloader/IAPTest_LL/IAPTest_LL/Core/Src/main.c).
 
@@ -91,7 +95,8 @@ The firmware maps the six external channels to the MCU as follows:
 
 I2C uses PA9 for SCL and PA10 for SDA. The firmware configures both as
 open-drain, enables clock stretching and the analog filter, and does not enable
-MCU-internal pull-ups.
+MCU-internal pull-ups. The board schematic shows external 10 kΩ pull-ups from
+both lines to 3.3 V.
 
 ### Startup state
 
@@ -109,6 +114,11 @@ start as floating inputs, and B0 through B4 start as push-pull outputs driven
 low. B5 is PA13, which is also SWDIO, and is not configured by the generated
 startup GPIO function. A host must not rely on a signal's power-on mode; it must
 issue the command that establishes the required mode.
+
+Application clock startup contains unbounded waits for flash and oscillator
+state. A clock-start failure can therefore leave the application unavailable
+before I2C starts; from the host this is indistinguishable from another
+transport failure.
 
 ## I2C transaction model
 
@@ -145,12 +155,19 @@ were transported, not that the register, length or value was accepted.
 - A short read leaves the TX cursor partway through the response. A later bare
   read resumes there unless the host first selects a register again.
 - Unsupported reads and ADC timeouts do not replace the TX buffer. They can
-  return bytes from an earlier successful command.
+  return bytes from an earlier successful command. Before the first successful
+  response is prepared, static initialization makes the buffer return zero.
 - RX overflow wraps to the beginning of the 50-byte buffer instead of rejecting
   the transaction.
 - Command callbacks run inside the I2C interrupt handler. ADC conversion, RGB
   output, flash erase/program and address reinitialization therefore delay the
   firmware's main-loop work.
+- I2C error interrupts are enabled, but the error callback does not clear,
+  report or recover from errors. Persistent or retriggered bus-fault behavior is
+  a source-derived risk and remains hardware-unverified.
+- Incomplete-write recovery can reinitialize I2C and block the main loop for
+  500 ms. Its trigger state is not cleared by that recovery path, so the delay
+  can repeat until a later STOP clears the state.
 
 Host requirements follow directly: select a register for every read, request
 exactly the documented response length, validate every value before sending it,
@@ -216,7 +233,9 @@ little-endian.
 Write length checks are inconsistent. Digital, PWM, angle and brightness use
 the first payload byte and ignore trailing bytes. LED count, single LED, fill
 and direct servo pulse require their exact documented lengths. Hosts must always
-send the exact length in the table.
+send the exact length in the table. Among global writes, `0xFA` and `0xFF`
+require exactly one payload byte, while `0xFD` uses the first payload byte and
+ignores trailing data.
 
 ### Digital output: `B+0x0`, `B+0x1`
 
@@ -266,6 +285,12 @@ value and the I2C transaction itself can succeed, so range checks and transport
 health cannot reliably detect this firmware-level timeout. Hosts can detect bus
 errors, but ADC freshness is an irreducible limitation of the stock firmware.
 
+The conversion wait counter is shared across all 22 samples in one request and
+is not reset after each sample. The 32,000-iteration limit is therefore a
+cumulative busy-wait budget, not a per-sample timeout. ADC calibration and ready
+waits during startup also break out after their own limits while allowing the
+application to continue without recording that ADC initialization failed.
+
 ## PWM
 
 Registers `B+0x2` and `B+0x3` select PWM on signal A or B. The one-byte duty
@@ -280,11 +305,13 @@ This is software-polled GPIO PWM, not timer output compare:
 - The calculated nominal frequency is `1,000,000 / 2550`, approximately
   **392.16 Hz**.
 - The calculated nominal duty fraction is approximately `d / 255`; the source
-  uses an inclusive `counter <= d * 10` comparison.
+  uses an inclusive `counter <= d * 10` comparison. Under ideal loop timing, a
+  non-saturated high interval is approximately `(10 * d + 1) / 2550` of a
+  period.
 - All twelve signals share one timer phase.
 
-There is no frequency register or frequency variable in firmware v2. This
-confirms the limitation reported in
+There is no frequency register or frequency variable in application firmware
+version 2. This confirms the limitation reported in
 [upstream issue #1](https://github.com/m5stack/M5Unit-PbHub-Internal-FW/issues/1).
 Passive-buzzer notes cannot be varied and loads requiring another PWM frequency
 cannot be driven correctly by this firmware. The issue was still open when this
@@ -306,8 +333,11 @@ Source-confirmed edge cases:
   requested duty-255 output low: PWM was high, another mode drives the pin low,
   then PWM 255 is enabled while the stale internal state still says "high".
 
-These cases require oscilloscope validation before v2 can claim reliable PWM
-behavior.
+The host component can avoid both steady-state edge cases by using digital low
+for encoded duty 0, digital high for encoded duty 255 and the PWM registers only
+for duties 1 through 254. Transitions between those modes and intermediate PWM
+still require oscilloscope validation because firmware edge-state flags survive
+mode changes.
 
 ## Servo
 
@@ -343,16 +373,19 @@ stretch a high pulse. Hardware testing under worst-case bus traffic is required.
 
 ## RGB output
 
-RGB commands always claim signal B. They disable PWM and servo on B and configure
-it as a push-pull output.
+Single-LED and fill writes claim signal B. They disable PWM and servo on B and
+configure it as a push-pull output before validating the requested index or
+range. Consequently, even a color write that renders nothing can take the pin
+away from its prior mode. LED-count and brightness writes only update cached
+configuration; they do not change the pin mode or transmit data.
 
 The firmware allocates an independent 74-entry color buffer for each channel.
 Payload colors are expressed as R, G, B; the serialized 24-bit wire order is
 G, R, B. There is no fourth white channel, so RGBW SK6812 devices are not fully
 supported.
 
-Every color command transmits immediately. There is no separate buffered
-`show` command:
+Every in-range single-LED or fill write transmits immediately. There is no
+separate buffered `show` command:
 
 - A single-LED command updates one cached entry and retransmits the prefix from
   LED 0 through that index.
@@ -368,7 +401,10 @@ change initiates a new bit-banged transmission inside the I2C callback.
 Payload: `count_le16`.
 
 The count defaults to 74. Values above 74 are clamped to 74; zero is accepted.
-The ESPHome component should use `1..74` for a configured light.
+Zero makes indexed updates fail their `index < configured_count` check, and the
+firmware defines no other zero-count strip behavior. Changing the count neither
+clears the color buffer nor transmits a frame. The ESPHome component must use
+`1..74` for a configured light.
 
 ### One LED: `B+0x9`
 
@@ -380,7 +416,8 @@ index_lo, index_hi, red, green, blue
 
 The update executes only when `index < configured_count`. Reading the register
 returns the last five payload bytes, not the current rendered color after later
-operations.
+operations. Before the first write, static initialization makes this readback
+all zero.
 
 ### Fill range: `B+0xA`
 
@@ -407,6 +444,10 @@ configured_count <= 74
 The ESPHome component must enforce these bounds and should use a single safe
 fill over the configured range for a uniform light.
 
+Reading the fill register returns the last seven requested payload bytes,
+including an invalid or clipped request, rather than the effective range or
+rendered colors.
+
 ### Brightness: `B+0xB`
 
 Brightness defaults to 255. Changing it does not rescale or retransmit existing
@@ -419,10 +460,9 @@ computes:
 output = input / floor(255 / brightness)
 ```
 
-Values 128 through 254 therefore produce full intensity, and the remaining
-steps are highly nonlinear. The v2 host component should keep firmware
-brightness at 255 and apply on/off and brightness scaling to RGB values before
-sending them.
+Values 128 through 254 therefore produce no attenuation, and the remaining steps
+are highly nonlinear. The v2 host component should keep firmware brightness at
+255 and apply on/off and brightness scaling to RGB values before sending them.
 
 ### LED timing mode: global `0xFA`
 
@@ -452,7 +492,11 @@ signal away from another configured feature.
 | ADC read | Signal A | Digital mode, PWM and servo |
 | PWM A/B | Selected signal | Digital mode and servo |
 | Servo A/B | Selected signal | Digital mode and PWM |
-| RGB command | Signal B | Digital mode, PWM and servo |
+| RGB single/fill write | Signal B | Digital mode, PWM and servo |
+
+LED-count and brightness writes, all RGB-related reads and global LED timing
+mode changes do not claim a signal. The ESPHome RGB entity still owns signal B
+exclusively because each rendered state uses a fill write.
 
 There is no active-mode register. Most readbacks are cached command values, not
 the current pin configuration. A host should prevent multiple ESPHome entities
@@ -468,11 +512,18 @@ from owning the same endpoint rather than allowing runtime mode fights.
 | `0xFE` | R | 1 byte | Application firmware version, hard-coded `2` | Published |
 | `0xFF` | R/W | 1 byte | Active and persistent I2C address | Published |
 
+Register `0xFE` is a self-reported protocol-version guard. A value of 2 does not
+authenticate the exact factory image or distinguish modified firmware that keeps
+the same version byte.
+
 ### Address register: `0xFF`
 
 The write accepts any value from 1 through 127, including I2C-reserved addresses.
 It stores the byte in flash and immediately reinitializes I2C at the new address.
-The host receives no confirmation that persistence succeeded.
+The host receives no confirmation that persistence succeeded. The flash helper
+can erase and retry the page up to 21 times, but the register handler ignores its
+final result. A failed write can therefore leave the new address active only in
+RAM until reset without having persisted it.
 
 Persistence uses the last 1 KiB flash page at `0x08003C00`. Its record contains
 a `0xAA55` header, a 16-bit length and the address byte. There is no checksum or
@@ -489,142 +540,57 @@ requests an MCU reset. It does not set a persistent bootloader flag. After reset
 the bootloader merely presents its normal short IAP window before returning to a
 valid application.
 
-The component should not expose this register until firmware update and recovery
-have been proven on hardware.
+The component does not expose this register.
 
-## Bootloader and firmware update research
+## Excluded mutation and recovery controls
 
-This section documents source findings; it is not a validated flashing procedure.
-Do not implement or use I2C flashing from this description alone.
-
-### Flash layout
-
-The MCU has 16 KiB of flash in 1 KiB pages.
-
-| Region | Address range | Purpose |
-|---|---|---|
-| Bootloader | `0x08000000..0x08000FFF` | 4 KiB bootloader; version byte at the last address |
-| Application and CRC | `0x08001000..0x08003BFF` | 11 KiB CRC-protected application region |
-| Stored CRC | `0x08003BFC..0x08003BFF` | Last four bytes of the application region |
-| Persistent settings | `0x08003C00..0x08003FFF` | 1 KiB address-storage page |
-
-The supplied full factory HEX image is a complete 16 KiB direct-programming
-image, not an I2C IAP payload. It contains bootloader version byte 1 at
-`0x08000FFF`, application firmware v2, a CRC at `0x08003BFC`, and an erased
-settings page.
-
-CRC coverage is exactly `0x08001000..0x08003BFB`, or `0x2BFC` bytes including
-erased `0xFF` padding. The stored four-byte value is little-endian. The CRC is
-the reflected CRC-32/ISO-HDLC form of polynomial `0x04C11DB7`, with initial value
-`0xFFFFFFFF`, byte-input reversal, output-bit reversal and final XOR
-`0xFFFFFFFF`; ordinary `zlib.crc32()` produces the same result. For the supplied
-image, both the calculated and stored values are `0xCE41DBAC`, stored as bytes
-`AC DB 41 CE`.
-
-Before jumping, the bootloader checks this CRC and tests the initial stack
-pointer. It loads the reset-handler word but does not validate that handler's
-address, so this is not full vector-table validation.
-
-The application linker configuration declares `0x08001000` plus `0x3000` bytes,
-which technically includes the settings page at `0x08003C00`. This overlap is a
-firmware risk; the ESPHome component treats page 15 as reserved settings storage
-and does not perform firmware writes.
-
-### I2C IAP behavior
-
-The bootloader listens at fixed address `0x54`, not the application's configured
-address. On reset it waits approximately 500 ms before checking and starting a
-valid application. Every accepted write-page opcode extends the window to
-approximately 60 s.
-
-Source-visible opcodes are:
-
-| Opcode | Meaning |
-|---:|---|
-| `0x06` | Erase/program one 1024-byte page |
-| `0x77` | Attempt to validate and start the application |
-
-The apparent page-write frame is 1032 bytes:
-
-```text
-0:       opcode 0x06
-1..4:    destination address, big-endian
-5..6:    declared byte count, big-endian
-7:       unused/reserved by the implementation
-8..1031: 1024 bytes of page data
-```
-
-The page data is sent in normal binary byte order. Correct application page
-starts are the eleven 1 KiB-aligned addresses from `0x08001000` through
-`0x08003800`, inclusive. Explicit exit is a one-byte transaction containing
-`0x77`; timeout also attempts to start the application.
-
-The implementation is unsafe and incomplete as a public protocol:
-
-- It tests only whether the declared byte count is nonzero, then always erases
-  and programs 1024 bytes.
-- It does not verify page alignment.
-- It validates only the starting address, not the end address. In particular,
-  `0x08003C00` is accepted even though writing it erases persistent settings.
-- It has no response/status packet and no read-back command.
-- The RX interrupt has no bounds check for its 1032-byte buffer.
-- A short frame can program stale or zero-filled receive-buffer contents.
-- A malformed or interrupted update can invalidate the application CRC and
-  leave the device in repeated bootloader windows.
-
-These facts do not provide the safety, acknowledgement or verification required
-for an ESPHome updater. ESPHome therefore does not expose IAP. Updater design and
-page sequencing belong to the
-[firmware engineering track](https://github.com/ngorchilov/M5Unit-PbHub-Internal-FW/blob/main/docs/pbhub-firmware-protocol.md).
-
-### Documented SWD recovery route
-
-M5Stack's product page recommends its
-[M5 DAPLink procedure](https://docs.m5stack.com/en/guide/develop_tools/daplink)
-when an STM32 downloader is unavailable. The schematic exposes a five-pad SWD
-header with 3.3 V, SWCLK, SWDIO, reset and ground. The DAPLink documentation lists
-an `STM32F0xx_16` algorithm and accepts HEX or BIN firmware.
-
-No complete PBHUB recovery procedure has been hardware-validated for this
-component, and no official IAP host uploader was found. Detailed SWD, IAP and
-recovery work is maintained in the
-[firmware engineering track](https://github.com/ngorchilov/M5Unit-PbHub-Internal-FW/blob/main/docs/pbhub-firmware-protocol.md).
+The source contains a reset register, a legacy I2C bootloader and persistent
+address mutation. These paths lack the acknowledgement, verification and
+hardware-proven recovery contract required for a safe ESPHome feature. The
+component therefore exposes none of them. Detailed build, IAP, SWD and firmware
+remediation work belongs exclusively to the firmware project.
 
 ## Source-confirmed defects and host mitigations
 
 | Firmware behavior | Consequence | Required host mitigation |
 |---|---|---|
-| Invalid channel/endpoint can fall back or alias channel 0 | Wrong physical output changes | Exact schema and runtime validation |
+| Invalid register bank aliases channel 0 | Wrong physical output changes | Exact schema and runtime validation |
 | Unknown reads return stale TX data | Plausible but false values | Never issue unknown reads; exact response sizes |
 | ADC timeout can return a stale valid sample | Undetectable loss of freshness | Document limitation; do not promise per-sample freshness |
-| I2C failures are not semantic errors | Rejected values look successful | Validate before writing; track transport health |
+| I2C ACK is not a semantic or physical-state confirmation | Rejected values can look successful | Validate before writing; treat entity state as commanded/desired and track transport health |
+| Error handling and incomplete-write recovery are defective | Persistent faults or repeated 500 ms stalls | Rate-limit recovery probes; invalidate applied-state caches; hardware fault testing |
 | Modes silently replace each other | Configured entities fight over a pin | Enforce one owner per endpoint |
 | Fixed software PWM | No RTTTL pitch or load-specific frequency | Document about 392 Hz; reject/ignore frequency requests visibly |
+| PWM duties 0 and 255 have edge-state defects | Glitch at zero or stale low at full scale | Use digital low/high for encoded extrema; PWM registers only for 1 through 254 |
 | PWM/servo depend on main-loop polling | Jitter and stretched pulses under load | Rate-limit I2C work; hardware stress tests |
 | Invalid servo values change mode before rejection | Unexpected pulses | Host range validation |
 | RGB fill bounds check is wrong | Out-of-bounds RAM access | Enforce `start + count <= configured_count <= 74` |
 | RGB brightness math is nonlinear and delayed | Incorrect brightness | Keep firmware scaler at 255; host-scale RGB |
 | I2C address writes wear flash and lack confirmation | Address loss or reserved address | Do not expose runtime address mutation |
-| Reset/IAP has no safe public updater | Bricking risk | Keep `0xFD` and IAP unexposed until recovery is validated |
+| Reset/IAP has no safe public updater | Bricking risk | Do not expose `0xFD` or IAP |
 
 ## Hardware validation backlog
 
 The following observations must be measured before being promoted from
 calculated or source-confirmed behavior to verified device behavior:
 
-1. PWM frequency, high time and jitter at duties 0, 1, 127, 254 and 255.
-2. PWM re-entry after digital, ADC, servo and RGB mode changes.
+1. PWM frequency, high time and jitter at encoded duties 1, 127 and 254; verify
+   that encoded 0 and 255 use stable digital low and high.
+2. PWM re-entry after digital extrema, ADC, servo and RGB mode changes.
 3. Servo pulse width and frame rate at 500, 1500 and 2500 microseconds.
 4. PWM and servo behavior while polling ADC and updating 74 LEDs.
-5. RGB color order and both LED timing modes on representative supported LEDs.
+5. RGB color order at byte values 0, 127, 128, 254 and 255, plus both LED timing
+   modes on representative supported LEDs.
 6. Digital input behavior on floating, driven-low and driven-high signals.
 7. ADC accuracy and noise at safe known voltages on all six channels.
-8. I2C behavior at 100 kHz and 400 kHz, including hub reconnect and bus errors.
-9. Power sequencing when the ESP device and PBHUB do not start simultaneously.
+8. I2C behavior at 100 kHz and 400 kHz, including an interrupted write, hub
+   reconnect, injected bus errors and detection of repeating 500 ms stalls.
+9. Power sequencing and hub reset when the ESP device and PBHUB do not start or
+   restart simultaneously.
 
 ## ESPHome scope boundary
 
 ESPHome v2 targets the existing application protocol. It does not expose
-firmware mutation, address mutation or reset-to-IAP controls. Proposed firmware
-changes, build recovery work and their validation belong to the separate
-[firmware engineering track](https://github.com/ngorchilov/M5Unit-PbHub-Internal-FW/blob/main/docs/pbhub-firmware-protocol.md).
+firmware mutation, address mutation or reset-to-IAP controls. Firmware changes,
+build recovery work and their validation remain in the separate firmware
+project.
