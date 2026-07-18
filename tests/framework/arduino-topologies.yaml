@@ -1,0 +1,6 @@
+esphome:
+  name: pbhub-phase7-arduino-topologies
+
+packages:
+  target: !include ../common/esp32-arduino-topology.yaml
+  scenario: !include ../common/pbhub-full-topology.yaml

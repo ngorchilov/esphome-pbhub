@@ -21,8 +21,9 @@ boundary for each commit.
    worsen the firmware's PWM and servo jitter.
 6. Target the audited stock PBHUB application protocol reporting firmware
    version 2.
-7. Target the public APIs of ESPHome 2026.7.0 and require every selected
-   framework/target fixture to compile under that version.
+7. Target the public APIs of ESPHome 2026.7.0 on classic ESP32, with ESP-IDF as
+   the primary validation and runtime framework and Arduino as a compile-only
+   compatibility target.
 8. Publish only portable product and implementation documentation. Exclude
    machine-local paths, deployment identifiers and workflow history.
 
@@ -344,7 +345,7 @@ update resolves on/off, brightness and RGB on the host, then stages one safe fil
 from index 0 across exactly `num_leds` entries. Intermediate states coalesce in a
 fair parent-owned queue. The hub sends at most one normal RGB fill per provisional
 50 ms interval across all six strips. That host traffic policy is not a claim of
-firmware or servo timing safety and remains subject to Phase 8 measurement.
+firmware or servo timing safety and remains subject to Phase 9 measurement.
 
 PBHUB lights default to `default_transition_length: 0s`; explicit uniform RGB
 effects and transitions remain available and are sampled through the same queue.
@@ -648,7 +649,7 @@ scaled triple, duplicate queue entries coalesce and a six-client parent FIFO
 preserves fairness. The parent permits at most one normal RGB fill every 50 ms
 across the whole hub while continuing scheduled input and ADC polls between due
 fills. The fixed interval is a provisional traffic cap, not a firmware-derived
-safe rate; Phase 8 hardware measurements must validate or revise it. Recovery
+safe rate; Phase 9 hardware measurements must validate or revise it. Recovery
 replay bypasses this cadence so the parent cannot enter `READY` before the latest
 desired state has actually been transported.
 
@@ -986,7 +987,46 @@ Acceptance:
 - Detected recovery restores timing/count/brightness before replaying the
   desired fill; a failed step does not advance to output replay.
 
-### Phase 7 - Documentation and ESPHome 2026.7.0 validation
+### Phase 7 - Framework and bus-topology validation
+
+Changes:
+
+- Make classic ESP32 with ESP-IDF the canonical configuration, code-generation,
+  detailed compile and runtime-validation target.
+- Keep the detailed positive, negative, generated-contract and firmware-compile
+  suite on ESP-IDF so framework-dependent code paths are proved once instead of
+  multiplying every logical fixture across frameworks. Keep the strict host C++
+  tests framework-neutral.
+- Add two shared framework smoke scenarios: one core-only configuration and one
+  full-surface configuration exercising every PBHUB entity domain, feature guard
+  and supported bus topology. Compile both scenarios under ESP-IDF and Arduino.
+- In the shared full-surface scenario, cover a direct bus, two physical I2C
+  buses, multiple hubs sharing one bus at distinct addresses and TCA9548A
+  virtual channels. Include hubs using the same default address on separate
+  multiplexer channels. Address `0x62` represents a hub pre-addressed outside
+  this component; v2 does not mutate device addresses.
+- Update the local runner to keep detailed logic/configuration validation
+  separate from the small paired-framework compile smoke matrix.
+- Remove ESP8266 and ESP32-S3 from the v2 validation and support boundary.
+
+Acceptance:
+
+- The framework-neutral host C++ tests pass, and the detailed positive/negative
+  schema, generated-contract and firmware-compile suite passes on classic ESP32
+  with ESP-IDF under ESPHome 2026.7.0.
+- The core-only and full-surface fixtures compile on classic ESP32 under both
+  ESP-IDF and Arduino.
+- The full-surface fixture activates `USE_BINARY_SENSOR`, `USE_OUTPUT`,
+  `USE_OUTPUT_FLOAT_POWER_SCALING`, `USE_SENSOR`, `USE_SWITCH` and `USE_LIGHT`,
+  and exercises both PWM and servo output code generation.
+- Direct I2C, two physical I2C buses, same-bus hubs at distinct addresses and
+  TCA9548A virtual-channel configurations validate and compile under both
+  frameworks through the shared full-surface scenario.
+- No ESP8266 or ESP32-S3 fixture or v2 support claim remains.
+- Arduino compile success is described only as compile compatibility, not as
+  runtime or real-hardware support.
+
+### Phase 8 - Documentation and ESPHome 2026.7.0 validation
 
 Changes:
 
@@ -994,24 +1034,32 @@ Changes:
 - Publish a concise clean-break notice and the complete new YAML reference.
 - Document the self-reported firmware-version guard, commanded-state semantics,
   undetectable between-transaction reset, PWM, servo, RGB and voltage limits.
-- Run the complete framework/target matrix under ESPHome 2026.7.0.
+- Document that same-bus multi-hub examples require externally pre-addressed
+  devices because v2 deliberately exposes no runtime address mutation.
+- Publish only the framework, target and topology support demonstrated by Phase
+  7 under ESPHome 2026.7.0.
 
 Acceptance:
 
-- Every public example is a validated test fixture or is generated from one.
+- Every public example is a validated ESP-IDF fixture or is generated from one;
+  examples intended as framework-neutral also compile under every framework
+  claimed for that example.
 - No README platform names or addresses disagree with the schemas.
-- Every applicable example configures and compiles with ESPHome 2026.7.0.
+- Every applicable example configures and compiles under the Phase 7 matrix with
+  ESPHome 2026.7.0, without implying Arduino runtime validation.
 - Privacy scan is clean.
 
-### Phase 8 - Hardware validation and release
+### Phase 9 - Hardware validation and release
 
 Changes:
 
-- Execute the hardware matrix below.
+- Execute the hardware matrix below on classic ESP32 with ESP-IDF.
 - Record measured values separately from calculated firmware values.
 - Fix host-side issues exposed by measurement.
 - Tag a v2 prerelease, validate a representative deployment, then prepare
   merge/release.
+- Add an Arduino runtime-support claim only after a separate Arduino hardware
+  validation pass and an explicit plan update.
 
 Acceptance:
 
@@ -1032,12 +1080,20 @@ ESPHome release is separate future work and requires an explicit plan update.
 
 ### Frameworks and targets
 
-- ESP32 with Arduino.
-- ESP32 with ESP-IDF.
-- ESP8266 with Arduino.
-- At least one ESP32-S3 fixture matching the primary hardware target.
-- Direct I2C and a fixture using a compatible I2C multiplexer channel.
-- Multiple hubs on separate buses and, where addresses differ, one bus.
+- Classic ESP32 with ESP-IDF is the canonical configuration, code-generation,
+  detailed compile and real-hardware target.
+- Classic ESP32 with Arduino is a secondary compile-only compatibility target.
+- ESP8266 and ESP32-S3 are outside the v2 validation and support boundary.
+- Detailed positive/negative schema, generated-contract and firmware-fixture
+  coverage runs once against ESP-IDF; strict host C++ tests remain
+  framework-neutral.
+- A core-only fixture and one full-surface fixture compile under both ESP-IDF
+  and Arduino. The full-surface fixture exercises all PBHUB entity domains,
+  feature guards and supported topologies: direct I2C, two physical buses,
+  multiple hubs sharing one bus and TCA9548A virtual channels, including the
+  same default PBHUB address on isolated channels.
+- Real-hardware validation uses ESP-IDF only unless Arduino runtime support is
+  separately approved after its own hardware pass.
 
 ### Positive fixtures
 
@@ -1051,11 +1107,17 @@ ESPHome release is separate future work and requires an explicit plan update.
 - Servo mode through one ESPHome servo using stock, calibrated and reversed
   firmware-valid levels with zero transition length.
 - RGB counts 1 and 74.
-- Multiple hubs and buses.
+- A core-only configuration with no optional PBHUB entity domains.
+- A full-surface configuration activating every PBHUB entity domain and feature
+  guard.
+- Direct I2C and two physical I2C buses.
+- Multiple hubs sharing one bus at distinct addresses.
+- TCA9548A virtual channels, including hubs at the same default address on
+  isolated channels.
 
 ### Negative fixtures
 
-- Invalid endpoints including 2, 9, 12, 19, 42 and 49.
+- Invalid endpoints including 2, 9, 19 and 49.
 - Slots below 0 or above 5.
 - RGB counts 0 and 75.
 - Unknown output and LED timing modes.
@@ -1074,13 +1136,19 @@ ESPHome release is separate future work and requires an explicit plan update.
 
 The local validation runner should perform, as applicable:
 
-1. Python/schema fixture validation.
-2. `esphome config` for positive fixtures.
-3. Expected-failure assertions for negative fixtures.
-4. Compile each framework/target fixture under ESPHome 2026.7.0.
-5. C++ formatting/static checks available without tracked dotfiles.
-6. `git diff --check`.
-7. Privacy scan for absolute home paths, deployment identifiers, hidden workflow
+1. Host-side protocol, ownership, scheduling, recovery and entity behavior
+   tests.
+2. `esphome config` for detailed positive fixtures under classic ESP32 with
+   ESP-IDF.
+3. Expected-failure assertions for negative fixtures under ESP-IDF.
+4. Generated-source contract checks under ESP-IDF.
+5. Detailed positive-fixture compilation under ESP-IDF.
+6. Paired compilation of only the core-only and full-surface smoke scenarios
+   under ESP-IDF and Arduino; the full-surface pair contains the direct-bus,
+   two-physical-bus, same-bus multi-hub and TCA9548A topology matrix.
+7. C++ formatting/static checks available without tracked dotfiles.
+8. `git diff --check`.
+9. Privacy scan for absolute home paths, deployment identifiers, hidden workflow
    references and secret-like values.
 
 Because hidden files are deliberately excluded, do not add `.github`, formatter
@@ -1088,6 +1156,10 @@ dotfiles or local workflow notes. A hosted CI service can be revisited only if t
 repository policy changes explicitly.
 
 ## Required real-hardware matrix
+
+Execute this matrix on classic ESP32 with ESP-IDF. Arduino compilation is a
+separate compatibility signal and does not become a runtime or hardware-support
+claim unless an Arduino hardware pass is later approved and recorded.
 
 ### Digital
 
@@ -1138,7 +1210,10 @@ repository policy changes explicitly.
 ### Bus and power
 
 - Test 100 kHz and 400 kHz I2C.
-- Test direct bus and multiplexer routing.
+- Test a direct bus and both physical ESP32 I2C controllers as separate buses.
+- Test multiple hubs sharing one physical bus at distinct addresses.
+- Test TCA9548A virtual-channel routing, including two hubs using the same
+  default address on isolated channels.
 - Test controller-first, hub-first and simultaneous power-up.
 - Interrupt a transaction, induce bus errors and look specifically for repeated
   firmware-side 500 ms recovery stalls.
@@ -1181,10 +1256,17 @@ The overhaul is complete only when all of the following are true:
   between-transaction hub-reset case is documented explicitly.
 - Endpoint conflicts fail before normal operation.
 - Digital, ADC, PWM, servo and uniform RGB behavior matches the datasheet.
-- Public examples validate and compile under ESPHome 2026.7.0 for every claimed
-  framework/target combination.
+- The detailed configuration, code-generation and compile suite passes under
+  ESPHome 2026.7.0 on classic ESP32 with ESP-IDF.
+- The core-only and full-surface smoke fixtures compile under both ESP-IDF and
+  Arduino, without presenting Arduino compilation as runtime validation.
+- Direct-bus, two-physical-bus, same-bus multi-hub and TCA9548A topology paths
+  validate and compile under both frameworks through the shared full-surface
+  fixture; no ESP8266 or ESP32-S3 support is claimed.
+- Public examples validate and compile under each framework explicitly claimed
+  for that example.
 - Required hardware tests are recorded, with measured and calculated behavior
-  clearly separated.
+  clearly separated, on classic ESP32 with ESP-IDF.
 - A representative deployment using only the clean v2 API runs through a
   meaningful soak period.
 - README and the clean-break release note state stock-firmware limitations

@@ -2,26 +2,5 @@ esphome:
   name: pbhub-phase2-multi-hub
 
 packages:
-  common: !include ../common/esp32-arduino.yaml
-
-pbhub:
-  - id: first_hub
-    i2c_id: test_i2c
-    address: 0x61
-    led_timing_mode: 0
-  - id: second_hub
-    i2c_id: test_i2c
-    address: 0x62
-    led_timing_mode: 1
-
-output:
-  - platform: pbhub
-    id: first_hub_pwm
-    pbhub_id: first_hub
-    pin: 0
-    mode: pwm
-  - platform: pbhub
-    id: second_hub_pwm
-    pbhub_id: second_hub
-    pin: 0
-    mode: pwm
+  target: !include ../common/esp32-idf-topology.yaml
+  scenario: !include ../common/pbhub-full-topology.yaml

@@ -13,7 +13,8 @@ Run all configuration and expected-failure checks with:
 python3 tools/validate.py
 ```
 
-Add compilation of every positive ESPHome fixture with:
+Add compilation of the complete ESP-IDF behavior suite and the paired-framework
+core/topology matrix with:
 
 ```sh
 python3 tools/validate.py --compile
@@ -37,8 +38,31 @@ firmware brightness 255, safe fills, explicit black, non-finite rejection,
 coalescing, a fair parent-wide 50 ms fill cadence including timer wraparound,
 global timing and stop-on-failure recovery ordering. Schema fixtures prove the
 zero-transition default, explicit uniform effects/transitions and that LED timing
-is a parent-only option. The optional compile pass proves ESPHome code
-generation and integration for the hub-only, multi-hub, digital, PWM, servo,
-ADC, RGB and ownership surfaces. Neither command replaces real PBHUB hardware
-validation; ESPHome servo state and `has_reached_target()` are not transport or
+is a parent-only option. The optional compile pass proves ESPHome code generation
+and integration for the hub-only, multi-hub, digital, PWM, servo, ADC, RGB and
+ownership surfaces. Neither command replaces real PBHUB hardware validation;
+ESPHome servo state and `has_reached_target()` are not transport or
 physical-position feedback.
+
+## Framework and topology matrix
+
+Phase 7 makes classic ESP32 with ESP-IDF the detailed behavior target and adds a
+small explicit parity matrix for framework-sensitive firmware compilation.
+
+- Classic ESP32 with ESP-IDF is the primary configuration, code-generation,
+  detailed compile and real-hardware target. Detailed positive/negative schema,
+  generated-contract and logical fixtures run once on ESP-IDF.
+- Two shared scenarios compile under both ESP-IDF and Arduino: a core-only
+  configuration and a full-surface configuration exercising every PBHUB entity
+  domain and feature guard, including PWM and servo code generation.
+- The shared full-surface scenario covers direct I2C, two physical I2C buses,
+  multiple hubs sharing one bus at distinct addresses and two TCA9548A virtual
+  channels carrying hubs at the same default address. The `0x62` hubs represent
+  devices pre-addressed outside this component; the component does not mutate
+  device addresses.
+- The runner verifies the resolved framework through the generated compiler
+  definitions after each of the eleven firmware builds: nine ESP-IDF behavior
+  fixtures and two Arduino parity fixtures.
+- Arduino is a compile-only compatibility target. Hardware validation remains
+  ESP-IDF-only unless Arduino runtime support is separately approved and tested.
+- ESP8266 and ESP32-S3 are outside the v2 validation and support boundary.

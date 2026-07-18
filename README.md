@@ -19,7 +19,7 @@ protocol limitations and source-confirmed defects.
 > bounds, recovery replay and a fair parent-wide traffic limiter. The public
 > usage rewrite is not complete.
 > The guide below documents the main/v1 component and is not the v2 API. Until
-> Phase 7, the implementation plan records the target and status, while validated
+> Phase 8, the implementation plan records the target and status, while validated
 > fixtures are authoritative for the currently implemented v2 surface.
 
 ---

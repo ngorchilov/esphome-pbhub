@@ -1,0 +1,4 @@
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+  address: 0x61

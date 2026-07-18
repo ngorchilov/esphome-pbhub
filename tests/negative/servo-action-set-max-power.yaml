@@ -7,7 +7,7 @@ esphome:
           max_power: 99%
 
 packages:
-  common: !include ../common/esp32-arduino.yaml
+  common: !include ../common/esp32-idf.yaml
 
 pbhub:
   id: test_hub

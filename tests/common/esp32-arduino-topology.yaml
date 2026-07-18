@@ -1,0 +1,24 @@
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+i2c:
+  - id: test_i2c_primary
+    sda: GPIO21
+    scl: GPIO22
+    frequency: 100kHz
+    scan: false
+  - id: test_i2c_secondary
+    sda: GPIO25
+    scl: GPIO26
+    frequency: 400kHz
+    scan: false
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [pbhub]

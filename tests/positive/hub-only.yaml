@@ -2,9 +2,5 @@ esphome:
   name: pbhub-phase1-hub
 
 packages:
-  common: !include ../common/esp32-arduino.yaml
-
-pbhub:
-  id: test_hub
-  i2c_id: test_i2c
-  address: 0x61
+  target: !include ../common/esp32-idf.yaml
+  scenario: !include ../common/pbhub-core-only.yaml
