@@ -289,7 +289,6 @@ output:
     pbhub_id: hub
     pin: 11
     mode: servo
-    zero_means_zero: true
 
 servo:
   - id: hub_servo
@@ -297,15 +296,35 @@ servo:
     min_level: 2.5%
     idle_level: 7.5%
     max_level: 12.5%
+    transition_length: 0s
 ```
 
 ESPHome's servo component expresses the pulse as a fraction of its 20 ms frame.
-The PBHUB output converts that fraction to microseconds and uses the direct servo
-pulse register. A zero output uses a digital-low command to detach because zero
-is not a valid servo pulse in the STM32 protocol. The percentages above map to
-500, 1500 and 2500 microseconds in a 20 ms frame. Servo mode forces a neutral
-`FloatOutput` transform: no inversion or power remapping, and zero must remain
-zero. Calibration belongs in the `servo` component's level settings.
+The dedicated PBHUB servo output rounds each nonzero fraction to microseconds and
+uses the direct servo-pulse register; it does not branch through the PWM driver.
+Only the inclusive range 500 through 2500 microseconds is allowed to reach I2C.
+The percentages above therefore map to 500, 1500 and 2500 microseconds.
+
+Servo mode defaults `zero_means_zero` to true. An exact zero uses a digital-low
+command to detach because zero is not a valid servo pulse in the STM32 protocol.
+Static inversion and power remapping are rejected, as are recognized mutating
+YAML actions. A runtime guard prevents a non-neutral transformed pulse from
+reaching I2C. Calibration belongs in the ESPHome `servo` component: its stock
+defaults of 3%, 7.5% and 12% map to firmware-valid pulses of 600, 1500 and 2400
+microseconds. The wider values shown above and reversed calibration such as
+12.5%, 7.5% and 2.5% also remain within the firmware-accepted range. These
+protocol bounds do not prove the mechanical limits of a connected actuator;
+users must calibrate levels for their own servo and linkage.
+
+One PBHUB servo output may have only one ESPHome servo consumer, and
+`transition_length` must remain zero because ESPHome generates an output update
+on every main-loop pass while transitioning and can cause excessive distinct I2C
+pulse writes. RTTTL and generic output power/turn-on actions are rejected for
+this output. ESPHome servo state,
+including `has_reached_target()`, describes host-side command progression; it
+does not confirm successful transport or the servo's physical position. After
+detected transport recovery, the output replays its most recent desired pulse or
+detach command.
 
 ### Uniform RGB strip
 
@@ -362,11 +381,18 @@ Create one shared module-level implementation for:
 - `validate_endpoint`: split with `divmod(value, 10)` and require channel `0..5`
   plus index `0 or 1`.
 - `validate_led_count`: integer `1..74`.
-- required output mode: exact enum `pwm` during Phase 1, extended to `pwm` or
-  `servo` when direct-pulse servo support lands in Phase 5.
-- servo output transform, added with Phase 5: require `inverted: false`,
-  `min_power: 0%`, `max_power: 100%` and `zero_means_zero: true`; reject
-  incompatible values.
+- required output mode: exact enum `pwm` or `servo`, with distinct generated C++
+  output types rather than a runtime branch inside the PWM driver.
+- servo output transform: default `zero_means_zero` to true and require
+  `inverted: false`, `min_power: 0%`, `max_power: 100%` and
+  `zero_means_zero: true`.
+- servo consumer contract: allow exactly one ESPHome servo per PBHUB servo
+  output; require every `min_level`, `idle_level` and `max_level` to remain within
+  2.5% through 12.5%, including reversed calibration; and require
+  `transition_length: 0s`.
+- servo action contract: reject RTTTL and recursive automation actions that
+  target the output through `output.set_min_power`, `output.set_max_power` or
+  `output.turn_on`.
 - LED timing mode: exact enum/integer 0 or 1.
 
 Error text should include the endpoint formula and accepted values. Platform
@@ -591,6 +617,14 @@ applied cache records that duty and its derived mode together. This prevents the
 cache and register selection from disagreeing while ensuring that transitions
 between a digital extremum and intermediate PWM are never incorrectly skipped.
 
+The separate servo output stores either pulse width 500 through 2500 us or zero
+as the detach sentinel. Its applied cache changes only after a successful direct
+pulse or digital-low transaction. A transport failure preserves the newest
+desired pulse or detach state, invalidates the applied cache and relies on the
+parent's verified recovery pass to replay it. Invalid levels and runtime
+transform violations are local validation failures and do not alter desired
+state, generate I2C or enter transport recovery.
+
 Binary-sensor and ADC polling intervals enqueue read requests in a parent-owned,
 fixed-capacity FIFO. Duplicate requests from the same entity coalesce while
 pending, and the parent performs at most one scheduled read per loop pass. Queued
@@ -685,15 +719,34 @@ remains.
 
 ### Servo output
 
-- Convert a nonzero frame fraction to rounded microseconds using a 20,000 us
-  frame.
-- Force `zero_means_zero: true` and reject inversion or non-neutral
-  `min_power`/`max_power` settings in `mode: servo`. Dynamic output power-scaling
-  actions are unsupported; servo calibration uses `min_level`, `idle_level` and
-  `max_level` on the ESPHome servo component.
-- Accept only `500..2500 us`; reject other nonzero values locally.
-- A zero level sends digital low to detach and resets the host cache accordingly.
-- Use the direct pulse register, not angle or PWM duty.
+- Use a dedicated `PbHubServoOutput`, not a mode branch inside
+  `PbHubPWMOutput`, and write the firmware's direct pulse register rather than
+  angle or PWM duty.
+- Convert a finite nonzero frame fraction with
+  `round(level * 20,000 us)`, then allow only the inclusive 500 through 2500 us
+  range. Reject every other nonzero result locally before any mode-changing I2C
+  write.
+- Default `zero_means_zero` to true. Exact zero sends digital low to detach and
+  caches zero only after successful transport.
+- Require neutral static transforms: `inverted: false`, `min_power: 0%`,
+  `max_power: 100%` and `zero_means_zero: true`. Recheck those invariants at
+  runtime before accepting a nonzero level so direct C++ calls cannot silently
+  remap a pulse. Under the supported neutral configuration, exact zero remains a
+  detach command.
+- Allow exactly one ESPHome servo consumer. Its `min_level`, `idle_level` and
+  `max_level` must each fall within 2.5% through 12.5%; standard defaults
+  3%/7.5%/12%, calibrated 2.5%/7.5%/12.5% and reversed calibration are valid.
+- Require `transition_length: 0s`; a nonzero transition calls the output on every
+  main-loop pass and can cause excessive distinct I2C pulse writes. Reject RTTTL
+  and runtime `output.set_min_power`, `output.set_max_power` and
+  `output.turn_on` actions targeting this output.
+- Keep the firmware frame frequency fixed at nominal 50 Hz. A direct runtime
+  frequency request changes neither transport nor cache and warns only once.
+- Keep desired pulse/detach separate from the last successfully transported
+  command. Detected recovery replays the desired command after version 2 is
+  reverified.
+- Treat ESPHome servo state and `has_reached_target()` as host-side command
+  state, not confirmation of I2C success or physical servo position.
 - Document firmware jitter and require load testing before safety-sensitive use.
 
 ### RGB light
@@ -861,18 +914,36 @@ Acceptance:
 
 Changes:
 
-- Extend the output-mode validator and code generation with `mode: servo`.
-- Convert standard ESPHome servo frame fractions to microseconds.
-- Implement digital-low detach.
+- Add a distinct direct-pulse output type and exact `mode: servo` schema/codegen.
+- Convert ESPHome servo frame fractions through the 20 ms frame with local
+  500-through-2500 us validation.
+- Implement digital-low detach, success-only applied caching and recovery replay.
+- Validate static transforms, servo calibration/consumer constraints and
+  unsupported runtime consumers/actions.
 
 Acceptance:
 
 - Minimum, center and maximum standard pulses encode as 500, 1500 and 2500 us.
-- Zero detaches without sending an invalid servo pulse.
-- Invalid nonzero pulse fractions fail locally and do not change hub mode.
-- Inverted or power-remapped servo output configurations fail validation, and
-  zero remains a detach command.
-- Detected recovery replays the desired servo level or detach state.
+- ESPHome's defaults encode as firmware-valid 600, 1500 and 2400 us; the full
+  firmware-accepted range and reversed calibration pass schema validation
+  without claiming the connected actuator's mechanical limits.
+- Zero defaults to a true zero and detaches with digital low without sending an
+  invalid servo pulse.
+- A NaN that reaches the driver and every out-of-range nonzero pulse result fail
+  locally, preserve desired/applied state and do not change hub mode or health;
+  public `FloatOutput` calls retain ESPHome's normal infinity clamping behavior.
+- Inverted or power-remapped configurations fail validation. A runtime guard
+  prevents a non-neutral transformed pulse from reaching I2C; under the
+  supported neutral configuration, exact zero remains a detach command.
+- Nonzero transitions, multiple servo consumers, RTTTL and runtime power/turn-on
+  actions targeting the PBHUB servo output fail configuration.
+- Runtime frequency requests leave the fixed 50 Hz transport and caches
+  unchanged and warn only once per output.
+- Repeated successfully transported pulse or detach commands are deduplicated;
+  a failed write preserves desired state and detected recovery replays it only
+  after firmware version 2 is reverified.
+- Documentation makes no transport or physical-position claim from ESPHome
+  servo state or `has_reached_target()`.
 
 ### Phase 6 - RGB rebuild
 
@@ -956,7 +1027,8 @@ ESPHome release is separate future work and requires an explicit plan update.
 - ADC on all six slots.
 - PWM mode with inversion, power scaling, both zero behaviors and independent
   ADC signal A/PWM signal B ownership in one slot.
-- Servo mode through ESPHome servo.
+- Servo mode through one ESPHome servo using stock, calibrated and reversed
+  firmware-valid levels with zero transition length.
 - RGB counts 1 and 74.
 - Multiple hubs and buses.
 
@@ -970,7 +1042,10 @@ ESPHome release is separate future work and requires an explicit plan update.
 - Invalid native binary-sensor and switch endpoints.
 - Configurable PBHUB PWM frequency, RTTTL references and ESPHome servo using a
   PBHUB output in `mode: pwm`.
-- Servo inversion, non-neutral power scaling and `zero_means_zero: false`.
+- Servo inversion, non-neutral power scaling, `zero_means_zero: false`,
+  out-of-range calibration levels, nonzero transitions and multiple Servo
+  consumers.
+- RTTTL and runtime power/turn-on actions targeting a PBHUB servo output.
 - Duplicate binary sensors, duplicate switches and cross-domain features
   claiming the same endpoint.
 
@@ -1021,8 +1096,12 @@ repository policy changes explicitly.
 ### Servo
 
 - Measure pulse widths at 500, 1500 and 2500 us and the frame period.
+- Verify ESPHome's default 600, 1500 and 2400 us calibration and one reversed
+  calibration without changing pulse bounds.
 - Verify detach drives low and stops pulses.
 - Test first-frame behavior after mode changes.
+- Force a detected transport failure, then verify that recovery replays the most
+  recent pulse or detach command only after version 2 is reverified.
 - Repeat while ADC reads and a 74-LED RGB update are active.
 
 ### RGB
@@ -1057,7 +1136,7 @@ repository policy changes explicitly.
 | RGB traffic blocks software outputs | Long pulse or visible flicker | Uniform/coalesced fills, rate limit, hardware stress test |
 | Firmware invalid-value side effects | Unexpected output | Validate every range before I2C write |
 | Hub disconnect becomes a false alarm | Unsafe automation | Preserve state on read failure and expose parent warning |
-| Logical output state is mistaken for physical confirmation | Misleading entity state | Document switch as transported command and light as desired state; retain no false readback claim |
+| Logical output state is mistaken for physical confirmation | Misleading entity state | Document switch as transported command, light as desired state and servo state/`has_reached_target()` as host command progression; retain no false readback claim |
 | Recovery probing or firmware stalls flood the bus | Repeated disruption | Rate-limit probes; test interrupted writes and repeating 500 ms stalls |
 | Hub resets entirely between transactions | Applied state can be lost without detection | Document absent reset counter; validate known-failure replay and output-only reset behavior |
 | Restore mode energizes an output | Physical hazard | Safe-off default and explicit opt-in restoration |
@@ -1076,7 +1155,8 @@ The overhaul is complete only when all of the following are true:
 - Every entity keeps host-detected transport failure separate from valid state;
   the undetectable firmware ADC-staleness case is documented explicitly.
 - Switch state is described as a successfully transported command, light state
-  as ESPHome desired state, and neither as physical feedback; the undetectable
+  as ESPHome desired state and servo state/`has_reached_target()` as host-side
+  command progression. None is described as physical feedback; the undetectable
   between-transaction hub-reset case is documented explicitly.
 - Endpoint conflicts fail before normal operation.
 - Digital, ADC, PWM, servo and uniform RGB behavior matches the datasheet.

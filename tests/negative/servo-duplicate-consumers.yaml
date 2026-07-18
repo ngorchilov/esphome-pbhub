@@ -1,0 +1,22 @@
+esphome:
+  name: pbhub-servo-duplicate
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: servo_output
+    pbhub_id: test_hub
+    pin: 0
+    mode: servo
+
+servo:
+  - id: first_servo
+    output: servo_output
+  - id: second_servo
+    output: servo_output

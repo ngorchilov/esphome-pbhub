@@ -1,0 +1,21 @@
+esphome:
+  name: pbhub-servo-action-min
+  on_boot:
+    then:
+      - output.set_min_power:
+          id: servo_output
+          min_power: 1%
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: servo_output
+    pbhub_id: test_hub
+    pin: 0
+    mode: servo

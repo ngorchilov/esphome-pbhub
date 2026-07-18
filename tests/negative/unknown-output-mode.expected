@@ -1,1 +1,1 @@
-PBHUB output mode must be 'pwm'
+Unknown value 'variable', valid options are 'pwm', 'servo'

@@ -14,11 +14,11 @@ protocol limitations and source-confirmed defects.
 
 > **v2 branch status:** the clean ESPHome 2026.7 implementation is in progress.
 > Core transport, native digital entities, raw ADC and fixed-frequency PWM have
-> been replaced; later entity phases and the public usage rewrite are not
-> complete. The guide below documents the main/v1 component and is not the v2
-> API. Until Phase 7, the implementation plan records the target and status,
-> while validated fixtures are authoritative for the currently implemented v2
-> surface.
+> been replaced, and Phase 5 adds a dedicated direct-pulse servo output. Later
+> entity phases and the public usage rewrite are not complete.
+> The guide below documents the main/v1 component and is not the v2 API. Until
+> Phase 7, the implementation plan records the target and status, while validated
+> fixtures are authoritative for the currently implemented v2 surface.
 
 ---
 
@@ -36,8 +36,13 @@ This ESPHome component adds support for the [M5Stack PBHUB / PortHub](https://do
 
 Stock firmware does not support variable PWM frequency, so PBHUB PWM cannot be
 used for RTTTL. Its fixed PWM generator is also not the firmware's separate 50 Hz
-servo generator; direct servo support requires the dedicated v2 servo mode
-planned for the next phase.
+servo generator. The v2 implementation therefore uses a separate `mode: servo`
+output that writes the direct pulse register, accepts only pulses
+from 500 through 2500 microseconds in a 20 ms frame and detaches with digital
+low. It rejects RTTTL, non-neutral output transforms, runtime power-changing or
+generic turn-on actions, nonzero servo transitions and multiple ESPHome servo
+consumers. ESPHome servo state describes the host command; it is not physical
+position or transport feedback.
 
 ---
 

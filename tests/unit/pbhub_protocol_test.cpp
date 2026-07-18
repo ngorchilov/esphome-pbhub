@@ -22,6 +22,15 @@ template<size_t N> bool unchanged(const WriteCommand<N> &command, uint8_t reg, c
 
 int main() {
   constexpr std::array<uint8_t, 5> PWM_DUTIES{{0, 1, 127, 254, 255}};
+  struct ServoPulseCase {
+    uint16_t pulse_us;
+    std::array<uint8_t, 2> payload;
+  };
+  constexpr std::array<ServoPulseCase, 3> SERVO_PULSES{{
+      {500, {{0xF4, 0x01}}},
+      {1500, {{0xDC, 0x05}}},
+      {2500, {{0xC4, 0x09}}},
+  }};
 
   for (uint16_t encoded = 0; encoded <= 255; encoded++) {
     Endpoint endpoint{0xEE, 0xEE};
@@ -64,10 +73,17 @@ int main() {
         CHECK(pwm.payload == std::array<uint8_t, 1>{{duty == 255 ? uint8_t{1} : duty}});
       }
 
-      WriteCommand<2> servo{};
-      CHECK(make_servo_pulse_write(endpoint, 1500, servo));
-      CHECK(servo.reg == CHANNEL_BASES[channel] + 0x0E + index);
-      CHECK(servo.payload == std::array<uint8_t, 2>{{0xDC, 0x05}});
+      for (const auto &pulse : SERVO_PULSES) {
+        WriteCommand<2> servo{};
+        CHECK(make_servo_pulse_write(endpoint, pulse.pulse_us, servo));
+        CHECK(servo.reg == CHANNEL_BASES[channel] + 0x0E + index);
+        CHECK(servo.payload == pulse.payload);
+      }
+
+      WriteCommand<1> servo_detach{};
+      CHECK(make_servo_detach_write(endpoint, servo_detach));
+      CHECK(servo_detach.reg == CHANNEL_BASES[channel] + index);
+      CHECK(servo_detach.payload == std::array<uint8_t, 1>{{0}});
     }
 
     ReadCommand adc{0xEE, 0xEE};
@@ -107,6 +123,12 @@ int main() {
   CHECK(!is_supported_firmware(1));
   CHECK(!is_supported_firmware(3));
   CHECK(NOMINAL_PWM_FREQUENCY_HZ > 392.15f && NOMINAL_PWM_FREQUENCY_HZ < 392.17f);
+  CHECK(SERVO_FRAME_US == 20000);
+  CHECK(SERVO_MIN_PULSE_US == 500);
+  CHECK(SERVO_MAX_PULSE_US == 2500);
+  CHECK(NOMINAL_SERVO_FREQUENCY_HZ == 50.0f);
+  CHECK(SERVO_MIN_LEVEL == 0.025f);
+  CHECK(SERVO_MAX_LEVEL == 0.125f);
   CHECK(pwm_drive_mode(0) == PwmDriveMode::DIGITAL_LOW);
   CHECK(pwm_drive_mode(1) == PwmDriveMode::PWM);
   CHECK(pwm_drive_mode(254) == PwmDriveMode::PWM);
@@ -134,11 +156,11 @@ int main() {
   CHECK(servo.payload == std::array<uint8_t, 2>{{0xC4, 0x09}});
 
   const WriteCommand<2> servo_sentinel{0xEE, {{0xAA, 0xBB}}};
-  servo = servo_sentinel;
-  CHECK(!make_servo_pulse_write(endpoint, 499, servo));
-  CHECK(unchanged(servo, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
-  CHECK(!make_servo_pulse_write(endpoint, 2501, servo));
-  CHECK(unchanged(servo, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
+  for (const uint16_t invalid_pulse : std::array<uint16_t, 5>{{0, 1, 499, 2501, 65535}}) {
+    servo = servo_sentinel;
+    CHECK(!make_servo_pulse_write(endpoint, invalid_pulse, servo));
+    CHECK(unchanged(servo, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
+  }
 
   WriteCommand<2> count_sentinel{0xEE, {{0xAA, 0xBB}}};
   CHECK(!make_led_count_write(0, 0, count_sentinel));
@@ -182,6 +204,11 @@ int main() {
   CHECK(unchanged(write_sentinel, 0xEE, std::array<uint8_t, 1>{{0xAA}}));
   CHECK(!make_pwm_write({0, 2}, 127, write_sentinel));
   CHECK(unchanged(write_sentinel, 0xEE, std::array<uint8_t, 1>{{0xAA}}));
+  CHECK(!make_servo_detach_write(invalid_endpoint, write_sentinel));
+  CHECK(unchanged(write_sentinel, 0xEE, std::array<uint8_t, 1>{{0xAA}}));
+  servo = servo_sentinel;
+  CHECK(!make_servo_pulse_write(invalid_endpoint, 1500, servo));
+  CHECK(unchanged(servo, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
 
   bool digital = true;
   CHECK(decode_digital({{0}}, digital) && !digital);

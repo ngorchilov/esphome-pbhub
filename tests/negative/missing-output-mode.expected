@@ -1,1 +1,1 @@
-'mode' is a required option for [output.pbhub]
+PBHUB output mode is required; choose 'pwm' or 'servo'

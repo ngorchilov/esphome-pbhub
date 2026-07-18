@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-servo-reserved
+  name: pbhub-servo-max-level
 
 packages:
   common: !include ../common/esp32-arduino.yaml
@@ -10,7 +10,12 @@ pbhub:
 
 output:
   - platform: pbhub
-    id: invalid_output
+    id: servo_output
     pbhub_id: test_hub
     pin: 0
     mode: servo
+
+servo:
+  - id: invalid_servo
+    output: servo_output
+    max_level: 12.6%

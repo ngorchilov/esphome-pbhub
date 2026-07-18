@@ -11,6 +11,12 @@ inline constexpr uint8_t ENDPOINT_COUNT = 12;
 inline constexpr uint16_t MAX_LED_COUNT = 74;
 inline constexpr uint8_t EXPECTED_FIRMWARE_VERSION = 2;
 inline constexpr float NOMINAL_PWM_FREQUENCY_HZ = 1'000'000.0f / 2550.0f;
+inline constexpr uint16_t SERVO_FRAME_US = 20'000;
+inline constexpr uint16_t SERVO_MIN_PULSE_US = 500;
+inline constexpr uint16_t SERVO_MAX_PULSE_US = 2500;
+inline constexpr float NOMINAL_SERVO_FREQUENCY_HZ = 1'000'000.0f / SERVO_FRAME_US;
+inline constexpr float SERVO_MIN_LEVEL = static_cast<float>(SERVO_MIN_PULSE_US) / SERVO_FRAME_US;
+inline constexpr float SERVO_MAX_LEVEL = static_cast<float>(SERVO_MAX_PULSE_US) / SERVO_FRAME_US;
 inline constexpr uint8_t REG_LED_TIMING = 0xFA;
 inline constexpr uint8_t REG_FIRMWARE_VERSION = 0xFE;
 
@@ -157,7 +163,7 @@ constexpr bool make_pwm_write(Endpoint endpoint, uint8_t duty, WriteCommand<1> &
 }
 
 constexpr bool make_servo_pulse_write(Endpoint endpoint, uint16_t pulse_us, WriteCommand<2> &out) {
-  if (pulse_us < 500 || pulse_us > 2500)
+  if (pulse_us < SERVO_MIN_PULSE_US || pulse_us > SERVO_MAX_PULSE_US)
     return false;
 
   uint8_t reg{};
@@ -165,6 +171,10 @@ constexpr bool make_servo_pulse_write(Endpoint endpoint, uint16_t pulse_us, Writ
     return false;
   out = {reg, {{static_cast<uint8_t>(pulse_us & 0xFF), static_cast<uint8_t>(pulse_us >> 8)}}};
   return true;
+}
+
+constexpr bool make_servo_detach_write(Endpoint endpoint, WriteCommand<1> &out) {
+  return make_digital_write(endpoint, false, out);
 }
 
 constexpr bool make_led_count_write(uint8_t channel, uint16_t count, WriteCommand<2> &out) {

@@ -1,0 +1,17 @@
+esphome:
+  name: pbhub-servo-priority
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: servo_output
+    pbhub_id: test_hub
+    pin: 0
+    mode: servo
+    setup_priority: 900

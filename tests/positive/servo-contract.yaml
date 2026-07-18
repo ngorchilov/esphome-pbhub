@@ -1,0 +1,70 @@
+esphome:
+  name: pbhub-phase5-servo-contract
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  # Servo mode supplies zero_means_zero: true when it is omitted.
+  - platform: pbhub
+    id: calibrated_output
+    pbhub_id: test_hub
+    pin: 0
+    mode: servo
+  - platform: pbhub
+    id: default_output
+    pbhub_id: test_hub
+    pin: 10
+    mode: servo
+  - platform: pbhub
+    id: reversed_output
+    pbhub_id: test_hub
+    pin: 20
+    mode: servo
+  - platform: pbhub
+    id: direct_neutral_output
+    pbhub_id: test_hub
+    pin: 30
+    mode: servo
+    inverted: false
+    min_power: 0%
+    max_power: 100%
+    zero_means_zero: true
+
+servo:
+  - id: calibrated_servo
+    output: calibrated_output
+    min_level: 2.5%
+    idle_level: 7.5%
+    max_level: 12.5%
+    transition_length: 0s
+  - id: default_servo
+    output: default_output
+  - id: reversed_servo
+    output: reversed_output
+    min_level: 12.5%
+    idle_level: 7.5%
+    max_level: 2.5%
+  - id: direct_neutral_servo
+    output: direct_neutral_output
+    min_level: 3%
+    idle_level: 7.5%
+    max_level: 12%
+
+# Compile the supported high-level and direct-output action paths without
+# scheduling them on a device.
+script:
+  - id: supported_servo_actions
+    then:
+      - servo.write:
+          id: calibrated_servo
+          level: 0%
+      - servo.detach: calibrated_servo
+      - output.set_level:
+          id: direct_neutral_output
+          level: 7.5%
+      - output.turn_off: direct_neutral_output

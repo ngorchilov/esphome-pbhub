@@ -23,6 +23,8 @@ class FloatOutput {
   bool is_inverted() const { return this->inverted_; }
   void set_max_power(float max_power) { this->max_power_ = std::clamp(max_power, this->min_power_, 1.0f); }
   void set_min_power(float min_power) { this->min_power_ = std::clamp(min_power, 0.0f, this->max_power_); }
+  float get_max_power() const { return this->max_power_; }
+  float get_min_power() const { return this->min_power_; }
   void set_zero_means_zero(bool zero_means_zero) { this->zero_means_zero_ = zero_means_zero; }
   virtual void update_frequency(float frequency) { (void) frequency; }
   void test_write_state(float state) { this->write_state(state); }

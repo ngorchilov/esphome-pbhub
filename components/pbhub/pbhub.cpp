@@ -368,7 +368,7 @@ bool PbHubComponent::write_servo_pulse(protocol::Endpoint endpoint, uint16_t pul
 
 bool PbHubComponent::write_servo_detach(protocol::Endpoint endpoint) {
   protocol::WriteCommand<1> command{};
-  if (!protocol::make_digital_write(endpoint, false, command)) {
+  if (!protocol::make_servo_detach_write(endpoint, command)) {
     ESP_LOGE(TAG, "Rejected invalid PBHUB servo-detach endpoint");
     return false;
   }
@@ -494,6 +494,108 @@ bool PbHubPWMOutput::apply_desired_state_() {
     return false;
   this->applied_duty_ = this->desired_duty_;
   this->applied_mode_ = this->desired_mode_;
+  this->applied_known_ = true;
+  return true;
+}
+
+PbHubServoOutput::PbHubServoOutput(PbHubComponent *parent, uint8_t pin)
+    : parent_(parent), endpoint_valid_(protocol::decode_endpoint(pin, this->endpoint_)) {}
+
+void PbHubServoOutput::setup() {
+  if (!this->desired_known_)
+    this->write_state(0.0f);
+}
+
+void PbHubServoOutput::dump_config() {
+  ESP_LOGCONFIG(TAG, "PBHUB Servo Output:");
+  if (this->endpoint_valid_)
+    ESP_LOGCONFIG(TAG, "  Endpoint: %u", this->endpoint_.channel * 10U + this->endpoint_.index);
+  else
+    ESP_LOGCONFIG(TAG, "  Endpoint: invalid");
+  ESP_LOGCONFIG(TAG, "  Frame Frequency: nominal %.2f Hz (fixed by firmware)",
+                protocol::NOMINAL_SERVO_FREQUENCY_HZ);
+  ESP_LOGCONFIG(TAG, "  Pulse Range: %u..%u us; zero detaches", protocol::SERVO_MIN_PULSE_US,
+                protocol::SERVO_MAX_PULSE_US);
+  LOG_FLOAT_OUTPUT(this);
+}
+
+void PbHubServoOutput::update_frequency(float frequency) {
+  if (this->frequency_warning_logged_)
+    return;
+  this->frequency_warning_logged_ = true;
+  ESP_LOGW(TAG, "PBHUB servo frequency is fixed at nominal %.2f Hz; requested %.2f Hz was ignored",
+           protocol::NOMINAL_SERVO_FREQUENCY_HZ, frequency);
+}
+
+void PbHubServoOutput::write_state(float state) {
+  if (this->parent_ == nullptr)
+    return;
+  if (!std::isfinite(state)) {
+    if (!this->nonfinite_warning_logged_) {
+      ESP_LOGW(TAG, "Ignored non-finite PBHUB servo level");
+      this->nonfinite_warning_logged_ = true;
+    }
+    return;
+  }
+
+  uint16_t pulse_us = 0;
+  if (state != 0.0f) {
+    // FloatOutput normally guarantees this domain. Keep the check here so a
+    // future direct caller cannot overflow lround() before pulse validation.
+    if (state < 0.0f || state > 1.0f) {
+      if (!this->invalid_level_warning_logged_) {
+        ESP_LOGW(TAG, "Ignored PBHUB servo level %.4f outside the FloatOutput range", state);
+        this->invalid_level_warning_logged_ = true;
+      }
+      return;
+    }
+
+    bool transforms_neutral = !this->is_inverted();
+#ifdef USE_OUTPUT_FLOAT_POWER_SCALING
+    transforms_neutral = transforms_neutral && this->get_min_power() == 0.0f && this->get_max_power() == 1.0f &&
+                         this->zero_means_zero_;
+#endif
+    if (!transforms_neutral) {
+      if (!this->invalid_transform_warning_logged_) {
+        ESP_LOGW(TAG, "Ignored PBHUB servo level because output transforms are no longer neutral");
+        this->invalid_transform_warning_logged_ = true;
+      }
+      return;
+    }
+
+    const long rounded_pulse = std::lround(state * protocol::SERVO_FRAME_US);
+    if (rounded_pulse < protocol::SERVO_MIN_PULSE_US || rounded_pulse > protocol::SERVO_MAX_PULSE_US) {
+      if (!this->invalid_level_warning_logged_) {
+        ESP_LOGW(TAG,
+                 "Ignored PBHUB servo level %.4f: rounded pulse %ld us is outside the firmware-accepted range",
+                 state, rounded_pulse);
+        this->invalid_level_warning_logged_ = true;
+      }
+      return;
+    }
+    pulse_us = static_cast<uint16_t>(rounded_pulse);
+  }
+
+  this->desired_pulse_us_ = pulse_us;
+  this->desired_known_ = true;
+  if (this->parent_->is_hub_ready())
+    this->apply_desired_state_();
+}
+
+bool PbHubServoOutput::replay_state() { return !this->desired_known_ || this->apply_desired_state_(); }
+
+bool PbHubServoOutput::apply_desired_state_() {
+  if (this->applied_known_ && this->applied_pulse_us_ == this->desired_pulse_us_)
+    return true;
+  if (!this->endpoint_valid_)
+    return false;
+
+  const bool success = this->desired_pulse_us_ == 0 ? this->parent_->write_servo_detach(this->endpoint_)
+                                                    : this->parent_->write_servo_pulse(this->endpoint_,
+                                                                                     this->desired_pulse_us_);
+  if (!success)
+    return false;
+  this->applied_pulse_us_ = this->desired_pulse_us_;
   this->applied_known_ = true;
   return true;
 }

@@ -1,0 +1,19 @@
+esphome:
+  name: pbhub-servo-action-on
+  on_boot:
+    then:
+      - output.turn_on: servo_output
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: servo_output
+    pbhub_id: test_hub
+    pin: 0
+    mode: servo

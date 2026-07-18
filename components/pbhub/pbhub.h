@@ -148,6 +148,36 @@ class PbHubPWMOutput final : public output::FloatOutput, public Component, publi
   bool invalid_level_warning_logged_{false};
   bool frequency_warning_logged_{false};
 };
+
+class PbHubServoOutput final : public output::FloatOutput, public Component, public PbHubRecoveryClient {
+ public:
+  PbHubServoOutput(PbHubComponent *parent, uint8_t pin);
+
+  void setup() override;
+  void dump_config() override;
+  float get_setup_priority() const override { return PbHubComponent::SETUP_PRIORITY + 1.0f; }
+  void update_frequency(float frequency) override;
+
+  void invalidate_applied_state() override { this->applied_known_ = false; }
+  bool restore_configuration() override { return true; }
+  bool replay_state() override;
+
+ protected:
+  void write_state(float state) override;
+  bool apply_desired_state_();
+
+  PbHubComponent *parent_;
+  protocol::Endpoint endpoint_{};
+  uint16_t desired_pulse_us_{0};
+  uint16_t applied_pulse_us_{0};
+  bool endpoint_valid_{false};
+  bool desired_known_{false};
+  bool applied_known_{false};
+  bool invalid_level_warning_logged_{false};
+  bool invalid_transform_warning_logged_{false};
+  bool nonfinite_warning_logged_{false};
+  bool frequency_warning_logged_{false};
+};
 #endif
 
 #ifdef USE_SENSOR

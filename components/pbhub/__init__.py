@@ -4,12 +4,16 @@ import esphome.final_validate as fv
 from esphome.components import i2c
 from esphome.const import (
     CONF_ID,
+    CONF_IDLE_LEVEL,
+    CONF_MAX_LEVEL,
+    CONF_MIN_LEVEL,
     CONF_MODE,
     CONF_NUM_LEDS,
     CONF_OUTPUT,
     CONF_OUTPUT_ID,
     CONF_PIN,
     CONF_PLATFORM,
+    CONF_TRANSITION_LENGTH,
 )
 
 CODEOWNERS = ["@ngorchilov"]
@@ -21,6 +25,8 @@ CONF_SLOT = "slot"
 
 OUTPUT_MODE_PWM = "pwm"
 OUTPUT_MODE_SERVO = "servo"
+SERVO_MIN_LEVEL = 0.025
+SERVO_MAX_LEVEL = 0.125
 
 VALID_ENDPOINTS = (0, 1, 10, 11, 20, 21, 30, 31, 40, 41, 50, 51)
 VALID_ENDPOINTS_TEXT = ", ".join(str(endpoint) for endpoint in VALID_ENDPOINTS)
@@ -59,18 +65,6 @@ def validate_led_timing_mode(value):
     value = cv.int_(value)
     if value not in (0, 1):
         raise cv.Invalid("PBHUB LED timing mode must be 0 or 1")
-    return value
-
-
-def validate_output_mode(value):
-    value = cv.string_strict(value)
-    if value == OUTPUT_MODE_SERVO:
-        raise cv.Invalid(
-            "PBHUB output mode 'servo' is reserved for Phase 5 and is not "
-            "implemented yet"
-        )
-    if value != OUTPUT_MODE_PWM:
-        raise cv.Invalid("PBHUB output mode must be 'pwm'")
     return value
 
 
@@ -176,7 +170,30 @@ def _pbhub_output_modes(full_config):
     }
 
 
-def _reject_unsupported_output_consumers(full_config):
+def _reject_servo_output_actions(value, servo_output_ids, path=()):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = (*path, key)
+            action = str(key)
+            if action in (
+                "output.set_min_power",
+                "output.set_max_power",
+                "output.turn_on",
+            ) and isinstance(child, dict):
+                output_id = str(child.get(CONF_ID))
+                if output_id in servo_output_ids:
+                    raise cv.FinalExternalInvalid(
+                        f"PBHUB servo output '{output_id}' cannot be targeted "
+                        f"by {action}; servo transforms and pulse range are fixed",
+                        path=[cv.ROOT_CONFIG_PATH, *child_path, CONF_ID],
+                    )
+            _reject_servo_output_actions(child, servo_output_ids, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_servo_output_actions(child, servo_output_ids, (*path, index))
+
+
+def _validate_output_consumers(full_config):
     output_modes = _pbhub_output_modes(full_config)
     if not output_modes:
         return
@@ -190,6 +207,7 @@ def _reject_unsupported_output_consumers(full_config):
                 path=[cv.ROOT_CONFIG_PATH, "rtttl", index, CONF_OUTPUT],
             )
 
+    servo_consumers = {}
     for index, entry in enumerate(full_config.get("servo", [])):
         output_id = str(entry.get(CONF_OUTPUT))
         mode = output_modes.get(output_id)
@@ -200,6 +218,48 @@ def _reject_unsupported_output_consumers(full_config):
                 "50 Hz servo generator",
                 path=[cv.ROOT_CONFIG_PATH, "servo", index, CONF_OUTPUT],
             )
+        if mode != OUTPUT_MODE_SERVO:
+            continue
+
+        existing_index = servo_consumers.get(output_id)
+        if existing_index is not None:
+            raise cv.FinalExternalInvalid(
+                f"PBHUB servo output '{output_id}' is referenced by more than "
+                f"one ESPHome servo (servo[{existing_index}] and servo[{index}])",
+                path=[cv.ROOT_CONFIG_PATH, "servo", index, CONF_OUTPUT],
+            )
+        servo_consumers[output_id] = index
+
+        for field in (CONF_MIN_LEVEL, CONF_IDLE_LEVEL, CONF_MAX_LEVEL):
+            level = entry[field]
+            if not SERVO_MIN_LEVEL <= level <= SERVO_MAX_LEVEL:
+                raise cv.FinalExternalInvalid(
+                    f"PBHUB servo '{entry[CONF_ID]}' {field} must be between "
+                    "2.5% and 12.5% so firmware pulses remain within "
+                    "500..2500 us",
+                    path=[cv.ROOT_CONFIG_PATH, "servo", index, field],
+                )
+
+        transition = entry[CONF_TRANSITION_LENGTH]
+        if transition.total_milliseconds != 0:
+            raise cv.FinalExternalInvalid(
+                f"PBHUB servo '{entry[CONF_ID]}' requires transition_length: "
+                "0s because ESPHome software transitions would write I2C on "
+                "every loop pass",
+                path=[
+                    cv.ROOT_CONFIG_PATH,
+                    "servo",
+                    index,
+                    CONF_TRANSITION_LENGTH,
+                ],
+            )
+
+    servo_output_ids = {
+        output_id
+        for output_id, mode in output_modes.items()
+        if mode == OUTPUT_MODE_SERVO
+    }
+    _reject_servo_output_actions(full_config, servo_output_ids)
 
 
 def _final_validate(config):
@@ -208,7 +268,7 @@ def _final_validate(config):
     if full_config.data.get(data_key):
         return config
 
-    _reject_unsupported_output_consumers(full_config)
+    _validate_output_consumers(full_config)
 
     claimed = {}
     for claim in _collect_endpoint_claims(full_config):
