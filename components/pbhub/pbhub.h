@@ -10,6 +10,7 @@
 #include "pbhub_ownership.h"
 #include "pbhub_polling.h"
 #include "pbhub_recovery.h"
+#include "pbhub_rgb_queue.h"
 
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -32,6 +33,9 @@ namespace esphome::pbhub {
 class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRecoveryBackend {
  public:
   static constexpr float SETUP_PRIORITY = setup_priority::IO;
+  // Provisional host-side traffic policy. Phase 8 hardware measurements must
+  // validate or revise it; the firmware does not define a safe refresh rate.
+  static constexpr uint32_t RGB_MIN_REFRESH_INTERVAL_US = 50'000;
 
   void setup() override;
   void loop() override;
@@ -46,6 +50,7 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
 
   bool register_recovery_client(PbHubRecoveryClient *client);
   bool queue_poll(PbHubPollClient *client);
+  bool queue_rgb_write(PbHubRGBWriteClient *client);
   bool claim_endpoint(uint8_t encoded_endpoint, EndpointOwner owner, const char *owner_id);
   void set_led_timing_mode(uint8_t mode);
 
@@ -81,9 +86,11 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   void attempt_recovery_();
   void schedule_recovery_();
   bool write_led_timing_mode_(uint8_t mode);
+  bool rgb_refresh_due_() const;
 
   PbHubRecoveryCoordinator recovery_;
   PbHubPollQueue poll_queue_;
+  PbHubRGBWriteQueue rgb_write_queue_;
   EndpointClaimRegistry endpoint_claims_;
   bool configuration_error_{false};
   bool recovery_io_active_{false};
@@ -98,6 +105,9 @@ class PbHubComponent : public Component, public i2c::I2CDevice, private PbHubRec
   uint32_t last_failure_log_ms_{0};
   bool failure_logged_{false};
   bool recovery_scheduled_{false};
+  bool prefer_poll_after_rgb_{false};
+  bool rgb_refresh_started_{false};
+  uint32_t last_rgb_refresh_us_{0};
 };
 
 #ifdef USE_BINARY_SENSOR
@@ -228,23 +238,35 @@ class PbHubSwitch final : public switch_::Switch, public Component, public PbHub
 #endif
 
 #ifdef USE_LIGHT
-class PbHubRGBLight : public light::LightOutput, public PbHubRecoveryClient {
+class PbHubRGBLight : public light::LightOutput, public PbHubRecoveryClient, public PbHubRGBWriteClient {
  public:
   PbHubRGBLight(PbHubComponent *parent, uint8_t slot) : parent_(parent), slot_(slot) {}
 
   light::LightTraits get_traits() override;
+  void update_state(light::LightState *state) override;
   void write_state(light::LightState *state) override;
+  bool flush_pending_rgb_write() override;
 
   void invalidate_applied_state() override {
     this->configuration_applied_ = false;
     this->applied_known_ = false;
+    this->write_pending_ = this->desired_known_;
   }
   bool restore_configuration() override;
   bool replay_state() override;
 
   void set_led_count(uint16_t count) { this->led_count_ = count; }
+  void set_startup_off(bool startup_off) {
+    if (!startup_off)
+      return;
+    this->desired_color_ = {};
+    this->desired_known_ = true;
+    this->write_pending_ = true;
+  }
 
  protected:
+  bool capture_desired_state_(light::LightState *state);
+  bool desired_matches_applied_() const;
   bool apply_desired_state_();
 
   PbHubComponent *parent_;
@@ -253,8 +275,10 @@ class PbHubRGBLight : public light::LightOutput, public PbHubRecoveryClient {
   protocol::Rgb desired_color_{};
   protocol::Rgb applied_color_{};
   bool desired_known_{false};
+  bool write_pending_{false};
   bool configuration_applied_{false};
   bool applied_known_{false};
+  bool nonfinite_warning_logged_{false};
 };
 #endif
 

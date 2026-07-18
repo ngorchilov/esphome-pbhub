@@ -120,6 +120,7 @@ static void test_supported_startup_and_recovery() {
   light::LightState first_color(1.0f, 0.5f, 0.0f);
   bus.expect_write(0x61, 0x5A, {0, 0, 12, 0, 255, 128, 0});
   rgb.write_state(&first_color);
+  hub.loop();
 
   uint16_t adc_value = 0xBEEF;
   bus.expect_read_failure(0x61, 0x46, 2, i2c::ERROR_NOT_ACKNOWLEDGED);
@@ -159,6 +160,8 @@ static void test_supported_startup_and_recovery() {
   const size_t transactions_before_cached_outputs = bus.transaction_count();
   pwm.set_level(0.25f);
   rgb.write_state(&recovered_color);
+  set_unit_test_micros(micros() + PbHubComponent::RGB_MIN_REFRESH_INTERVAL_US);
+  hub.loop();
   CHECK(bus.transaction_count() == transactions_before_cached_outputs);
   CHECK(bus.empty());
 }

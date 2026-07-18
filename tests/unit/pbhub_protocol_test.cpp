@@ -163,15 +163,37 @@ int main() {
   }
 
   WriteCommand<2> count_sentinel{0xEE, {{0xAA, 0xBB}}};
+  for (uint8_t channel = 0; channel < CHANNEL_COUNT; channel++) {
+    WriteCommand<2> count{};
+    CHECK(make_led_count_write(channel, 1, count));
+    CHECK(count.reg == CHANNEL_BASES[channel] + 0x08);
+    CHECK(count.payload == std::array<uint8_t, 2>{{1, 0}});
+    CHECK(make_led_count_write(channel, 74, count));
+    CHECK(count.payload == std::array<uint8_t, 2>{{74, 0}});
+
+    WriteCommand<1> brightness{};
+    CHECK(make_led_full_brightness_write(channel, brightness));
+    CHECK(brightness.reg == CHANNEL_BASES[channel] + 0x0B);
+    CHECK(brightness.payload == std::array<uint8_t, 1>{{255}});
+  }
   CHECK(!make_led_count_write(0, 0, count_sentinel));
   CHECK(unchanged(count_sentinel, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
   CHECK(!make_led_count_write(0, 75, count_sentinel));
   CHECK(unchanged(count_sentinel, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
   CHECK(!make_led_count_write(6, 1, count_sentinel));
   CHECK(unchanged(count_sentinel, 0xEE, std::array<uint8_t, 2>{{0xAA, 0xBB}}));
+  WriteCommand<1> brightness_sentinel{0xEE, {{0xAA}}};
+  CHECK(!make_led_full_brightness_write(6, brightness_sentinel));
+  CHECK(unchanged(brightness_sentinel, 0xEE, std::array<uint8_t, 1>{{0xAA}}));
 
   WriteCommand<7> fill_sentinel{0xEE, {{1, 2, 3, 4, 5, 6, 7}}};
   const auto fill_before = fill_sentinel;
+  for (uint8_t channel = 0; channel < CHANNEL_COUNT; channel++) {
+    WriteCommand<7> fill{};
+    CHECK(make_led_fill_write(channel, 74, 0, 74, {0, 127, 255}, fill));
+    CHECK(fill.reg == CHANNEL_BASES[channel] + 0x0A);
+    CHECK(fill.payload == std::array<uint8_t, 7>{{0, 0, 74, 0, 0, 127, 255}});
+  }
   CHECK(make_led_fill_write(0, 1, 0, 1, {9, 8, 7}, fill_sentinel));
   CHECK(fill_sentinel.payload == std::array<uint8_t, 7>{{0, 0, 1, 0, 9, 8, 7}});
   CHECK(make_led_fill_write(5, 74, 73, 1, {9, 8, 7}, fill_sentinel));
@@ -183,6 +205,8 @@ int main() {
   CHECK(!make_led_fill_write(0, 74, 0, 0, {0, 0, 0}, fill_sentinel));
   CHECK(!make_led_fill_write(0, 74, 74, 1, {0, 0, 0}, fill_sentinel));
   CHECK(!make_led_fill_write(0, 74, 70, 10, {0, 0, 0}, fill_sentinel));
+  CHECK(!make_led_fill_write(0, 74, 0, 65535, {0, 0, 0}, fill_sentinel));
+  CHECK(!make_led_fill_write(0, 74, 65535, 1, {0, 0, 0}, fill_sentinel));
   CHECK(!make_led_fill_write(6, 1, 0, 1, {0, 0, 0}, fill_sentinel));
   CHECK(fill_sentinel.payload == fill_before.payload && fill_sentinel.reg == fill_before.reg);
 

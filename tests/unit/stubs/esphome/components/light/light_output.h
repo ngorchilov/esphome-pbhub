@@ -33,6 +33,7 @@ class LightOutput {
  public:
   virtual ~LightOutput() = default;
   virtual LightTraits get_traits() = 0;
+  virtual void update_state(LightState *) {}
   virtual void write_state(LightState *state) = 0;
 };
 

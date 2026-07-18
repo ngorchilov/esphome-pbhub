@@ -8,9 +8,11 @@ pbhub:
   - id: first_hub
     i2c_id: test_i2c
     address: 0x61
+    led_timing_mode: 0
   - id: second_hub
     i2c_id: test_i2c
     address: 0x62
+    led_timing_mode: 1
 
 output:
   - platform: pbhub

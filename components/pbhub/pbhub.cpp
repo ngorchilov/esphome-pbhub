@@ -82,9 +82,32 @@ void PbHubComponent::setup() {
 void PbHubComponent::loop() {
   if (!this->is_hub_ready())
     return;
-  auto *client = this->poll_queue_.pop();
-  if (client != nullptr)
-    client->perform_poll();
+
+  const bool rgb_available = this->rgb_refresh_due_() && !this->rgb_write_queue_.empty();
+  const bool poll_available = !this->poll_queue_.empty();
+
+  if (poll_available && (!rgb_available || this->prefer_poll_after_rgb_)) {
+    auto *poll_client = this->poll_queue_.pop();
+    if (poll_client != nullptr) {
+      this->prefer_poll_after_rgb_ = false;
+      poll_client->perform_poll();
+      return;
+    }
+  }
+
+  if (rgb_available) {
+    auto *rgb_client = this->rgb_write_queue_.pop();
+    if (rgb_client != nullptr && rgb_client->flush_pending_rgb_write()) {
+      this->prefer_poll_after_rgb_ = true;
+      return;
+    }
+  }
+
+  auto *poll_client = this->poll_queue_.pop();
+  if (poll_client != nullptr) {
+    this->prefer_poll_after_rgb_ = false;
+    poll_client->perform_poll();
+  }
 }
 
 void PbHubComponent::dump_config() {
@@ -96,6 +119,8 @@ void PbHubComponent::dump_config() {
   else
     ESP_LOGCONFIG(TAG, "  Firmware protocol version: unverified");
   ESP_LOGCONFIG(TAG, "  Recovery clients: %u", static_cast<unsigned>(this->recovery_.client_count()));
+  ESP_LOGCONFIG(TAG, "  Normal RGB fill limit: %u ms between fills per hub (provisional)",
+                static_cast<unsigned>(RGB_MIN_REFRESH_INTERVAL_US / 1000));
   ESP_LOGCONFIG(TAG, "  Communication/protocol failures: %u total, %u consecutive",
                 static_cast<unsigned>(this->total_failures_), static_cast<unsigned>(this->consecutive_failures_));
 }
@@ -112,6 +137,15 @@ bool PbHubComponent::queue_poll(PbHubPollClient *client) {
   if (this->poll_queue_.enqueue(client))
     return true;
   ESP_LOGE(TAG, "Rejected invalid or full PBHUB scheduled-read queue");
+  return false;
+}
+
+bool PbHubComponent::queue_rgb_write(PbHubRGBWriteClient *client) {
+  if (!this->is_hub_ready())
+    return false;
+  if (this->rgb_write_queue_.enqueue(client))
+    return true;
+  ESP_LOGE(TAG, "Rejected invalid or full PBHUB RGB-write queue");
   return false;
 }
 
@@ -245,6 +279,9 @@ void PbHubComponent::attempt_recovery_() {
   const bool recovered = this->recovery_.attempt_recovery(*this);
   this->recovery_io_active_ = false;
   if (recovered) {
+    // Recovery replay has already applied every known desired RGB state. Drop
+    // queued pre-failure entries so they cannot consume later scheduler turns.
+    this->rgb_write_queue_.clear();
     this->status_clear_warning();
     this->failure_logged_ = false;
     if (this->ever_ready_)
@@ -266,6 +303,10 @@ void PbHubComponent::attempt_recovery_() {
 
   this->status_set_warning(LOG_STR("PBHUB firmware version unverified"));
   this->schedule_recovery_();
+}
+
+bool PbHubComponent::rgb_refresh_due_() const {
+  return !this->rgb_refresh_started_ || micros() - this->last_rgb_refresh_us_ >= RGB_MIN_REFRESH_INTERVAL_US;
 }
 
 FirmwareProbeResult PbHubComponent::probe_firmware() {
@@ -409,7 +450,11 @@ bool PbHubComponent::fill_leds(uint8_t channel, uint16_t configured_count, uint1
   }
   if (!this->endpoint_owned_by_({channel, 1}, EndpointOwner::RGB, "LED fill write"))
     return false;
-  return this->write_command_("LED fill write", command);
+  if (!this->write_command_("LED fill write", command))
+    return false;
+  this->last_rgb_refresh_us_ = micros();
+  this->rgb_refresh_started_ = true;
+  return true;
 }
 
 #ifdef USE_BINARY_SENSOR
@@ -687,21 +732,53 @@ light::LightTraits PbHubRGBLight::get_traits() {
   return traits;
 }
 
-void PbHubRGBLight::write_state(light::LightState *state) {
-  if (this->parent_ == nullptr)
-    return;
-
+bool PbHubRGBLight::capture_desired_state_(light::LightState *state) {
+  if (state == nullptr)
+    return false;
   float red;
   float green;
   float blue;
   state->current_values_as_rgb(&red, &green, &blue);
+  if (!std::isfinite(red) || !std::isfinite(green) || !std::isfinite(blue)) {
+    if (!this->nonfinite_warning_logged_) {
+      ESP_LOGW(TAG, "Ignored non-finite PBHUB RGB state");
+      this->nonfinite_warning_logged_ = true;
+    }
+    return false;
+  }
+
   const auto to_byte = [](float value) {
-    return static_cast<uint8_t>(std::lround(std::max(0.0f, std::min(1.0f, value)) * 255.0f));
+    return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
   };
   this->desired_color_ = {to_byte(red), to_byte(green), to_byte(blue)};
   this->desired_known_ = true;
+  return true;
+}
+
+void PbHubRGBLight::update_state(light::LightState *state) { this->capture_desired_state_(state); }
+
+void PbHubRGBLight::write_state(light::LightState *state) {
+  if (this->parent_ == nullptr || !this->capture_desired_state_(state))
+    return;
+
+  if (this->desired_matches_applied_()) {
+    this->write_pending_ = false;
+    return;
+  }
+  this->write_pending_ = true;
   if (this->parent_->is_hub_ready())
-    this->apply_desired_state_();
+    this->parent_->queue_rgb_write(this);
+}
+
+bool PbHubRGBLight::flush_pending_rgb_write() {
+  if (!this->write_pending_ || this->parent_ == nullptr || !this->parent_->is_hub_ready())
+    return false;
+  if (this->desired_matches_applied_()) {
+    this->write_pending_ = false;
+    return false;
+  }
+  this->apply_desired_state_();
+  return true;
 }
 
 bool PbHubRGBLight::restore_configuration() {
@@ -716,16 +793,24 @@ bool PbHubRGBLight::restore_configuration() {
 
 bool PbHubRGBLight::replay_state() { return !this->desired_known_ || this->apply_desired_state_(); }
 
+bool PbHubRGBLight::desired_matches_applied_() const {
+  return this->applied_known_ && this->applied_color_.red == this->desired_color_.red &&
+         this->applied_color_.green == this->desired_color_.green &&
+         this->applied_color_.blue == this->desired_color_.blue;
+}
+
 bool PbHubRGBLight::apply_desired_state_() {
-  if (this->applied_known_ && this->applied_color_.red == this->desired_color_.red &&
-      this->applied_color_.green == this->desired_color_.green &&
-      this->applied_color_.blue == this->desired_color_.blue)
+  if (this->desired_matches_applied_()) {
+    this->write_pending_ = false;
     return true;
-  if (!this->parent_->fill_leds(this->slot_, this->led_count_, 0, this->led_count_, this->desired_color_.red,
+  }
+  if (this->parent_ == nullptr ||
+      !this->parent_->fill_leds(this->slot_, this->led_count_, 0, this->led_count_, this->desired_color_.red,
                                 this->desired_color_.green, this->desired_color_.blue))
     return false;
   this->applied_color_ = this->desired_color_;
   this->applied_known_ = true;
+  this->write_pending_ = false;
   return true;
 }
 #endif

@@ -22,6 +22,7 @@ MULTI_CONF = True
 
 CONF_PBHUB_ID = "pbhub_id"
 CONF_SLOT = "slot"
+CONF_LED_TIMING_MODE = "led_timing_mode"
 
 OUTPUT_MODE_PWM = "pwm"
 OUTPUT_MODE_SERVO = "servo"
@@ -72,6 +73,7 @@ CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(PbHubComponent),
+            cv.Optional(CONF_LED_TIMING_MODE): validate_led_timing_mode,
         }
     )
     .extend(i2c.i2c_device_schema(0x61))
@@ -82,6 +84,8 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await i2c.register_i2c_device(var, config)
+    if CONF_LED_TIMING_MODE in config:
+        cg.add(var.set_led_timing_mode(config[CONF_LED_TIMING_MODE]))
 
 
 def _path_text(path):

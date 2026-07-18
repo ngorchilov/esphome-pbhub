@@ -1,0 +1,18 @@
+esphome:
+  name: pbhub-rgb-addressable-effect
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+light:
+  - platform: pbhub
+    id: invalid_rgb
+    pbhub_id: test_hub
+    slot: 0
+    num_leds: 1
+    effects:
+      - addressable_rainbow:

@@ -1,0 +1,10 @@
+esphome:
+  name: pbhub-invalid-led-timing-two
+
+packages:
+  common: !include ../common/esp32-arduino.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+  led_timing_mode: 2

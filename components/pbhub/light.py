@@ -1,7 +1,12 @@
 import esphome.codegen as cg
 from esphome.components import light
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_OUTPUT_ID
+from esphome.const import (
+    CONF_DEFAULT_TRANSITION_LENGTH,
+    CONF_ID,
+    CONF_OUTPUT_ID,
+    CONF_RESTORE_MODE,
+)
 
 from . import (
     CONF_NUM_LEDS,
@@ -19,12 +24,20 @@ DEPENDENCIES = ["pbhub"]
 
 PbHubRGBLight = pbhub_ns.class_("PbHubRGBLight", light.LightOutput)
 
-CONFIG_SCHEMA = light.RGB_LIGHT_SCHEMA.extend(
+CONFIG_SCHEMA = light.light_schema(
+    PbHubRGBLight,
+    light.LightType.RGB,
+    default_restore_mode="ALWAYS_OFF",
+).extend(
     {
-        cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(PbHubRGBLight),
         cv.Required(CONF_PBHUB_ID): cv.use_id(PbHubComponent),
         cv.Required(CONF_SLOT): validate_slot,
         cv.Required(CONF_NUM_LEDS): validate_led_count,
+        # An ordinary light change should be one PBHUB fill. Users can opt in
+        # to transitions; the parent-wide scheduler still caps their traffic.
+        cv.Optional(
+            CONF_DEFAULT_TRANSITION_LENGTH, default="0s"
+        ): cv.positive_time_period_milliseconds,
     }
 )
 
@@ -41,4 +54,11 @@ async def to_code(config):
     )
     cg.add(parent.register_recovery_client(var))
     cg.add(var.set_led_count(config[CONF_NUM_LEDS]))
+    # ESPHome keeps this validated field as an EStr but its enum table contains
+    # MockObj values with overloaded equality, so compare the raw mode name.
+    startup_off = str(config[CONF_RESTORE_MODE]) in (
+        "ALWAYS_OFF",
+        "RESTORE_AND_OFF",
+    )
+    cg.add(var.set_startup_off(startup_off))
     await light.register_light(var, config)

@@ -11,6 +11,27 @@ import tempfile
 
 REQUIRED_ESPHOME_VERSION = "Version: 2026.7.0"
 
+GENERATED_SOURCE_CHECKS = {
+    "multi-hub.yaml": (
+        "pbhub-phase2-multi-hub",
+        (
+            "first_hub->set_led_timing_mode(0);",
+            "second_hub->set_led_timing_mode(1);",
+        ),
+    ),
+    "rgb-bounds.yaml": (
+        "pbhub-phase1-rgb",
+        (
+            "rgb_always_off_output->set_startup_off(true);",
+            "rgb_restore_default_output->set_startup_off(false);",
+            "rgb_restore_and_off_output->set_startup_off(true);",
+            "rgb_always_on_output->set_startup_off(false);",
+            "rgb_one_led->set_default_transition_length(0);",
+            "rgb_max_leds->set_default_transition_length(250);",
+        ),
+    ),
+}
+
 
 def run(command, cwd):
     return subprocess.run(
@@ -94,6 +115,35 @@ def compile_fixture(esphome, root, fixture):
         return False
 
     print(f"[PASS] {label}")
+    generated_check = GENERATED_SOURCE_CHECKS.get(fixture.name)
+    if generated_check is None:
+        return True
+
+    build_name, expected_lines = generated_check
+    source = (
+        fixture.parent
+        / ".esphome"
+        / "build"
+        / build_name
+        / "src"
+        / "main.cpp"
+    )
+    if not source.is_file():
+        print(
+            f"[FAIL] generated source not found: {source.relative_to(root)}",
+            file=sys.stderr,
+        )
+        return False
+    generated = source.read_text(encoding="utf-8")
+    missing = [line for line in expected_lines if line not in generated]
+    if missing:
+        print(
+            f"[FAIL] generated contract {fixture.relative_to(root)} "
+            f"missed expected lines: {missing}",
+            file=sys.stderr,
+        )
+        return False
+    print(f"[PASS] generated contract {fixture.relative_to(root)}")
     return True
 
 

@@ -14,8 +14,10 @@ protocol limitations and source-confirmed defects.
 
 > **v2 branch status:** the clean ESPHome 2026.7 implementation is in progress.
 > Core transport, native digital entities, raw ADC and fixed-frequency PWM have
-> been replaced, and Phase 5 adds a dedicated direct-pulse servo output. Later
-> entity phases and the public usage rewrite are not complete.
+> been replaced. Phase 5 adds a dedicated direct-pulse servo output, and Phase 6
+> rebuilds uniform RGB with host scaling, global timing configuration, safe
+> bounds, recovery replay and a fair parent-wide traffic limiter. The public
+> usage rewrite is not complete.
 > The guide below documents the main/v1 component and is not the v2 API. Until
 > Phase 7, the implementation plan records the target and status, while validated
 > fixtures are authoritative for the currently implemented v2 surface.
@@ -43,6 +45,12 @@ low. It rejects RTTTL, non-neutral output transforms, runtime power-changing or
 generic turn-on actions, nonzero servo transitions and multiple ESPHome servo
 consumers. ESPHome servo state describes the host command; it is not physical
 position or transport feedback.
+
+The v2 RGB light uses signal B of a slot and controls all configured LEDs with
+one uniform color. ESPHome applies on/off, brightness and gamma; the hub's broken
+brightness scaler stays at 255. Normal RGB fills are coalesced fairly across the
+hub and provisionally limited to one every 50 ms. This cap reduces traffic but is
+not a firmware or servo timing guarantee.
 
 ---
 

@@ -5,7 +5,7 @@ They contain no network credentials and use the repository's local
 `components/` directory through a relative path. The runner also builds and
 executes host-side protocol, ownership, recovery, scheduled-read serialization,
 native digital-entity, all-slot ADC, fixed-frequency PWM, direct-pulse servo and
-transport/health tests.
+uniform-RGB scheduling, recovery and transport/health tests.
 
 Run all configuration and expected-failure checks with:
 
@@ -32,7 +32,12 @@ calibration, neutral-transform defenses, success-only caching and
 recovery replay. Schema checks reject a configurable PBHUB frequency, RTTTL,
 pseudo-servo through fixed PWM, out-of-range servo calibration or transforms, nonzero
 servo transitions, duplicate Servo consumers and runtime power/turn-on actions
-targeting a PBHUB servo output. The optional compile pass proves ESPHome code
+targeting a PBHUB servo output. RGB tests cover exact host-scaled byte boundaries,
+firmware brightness 255, safe fills, explicit black, non-finite rejection,
+coalescing, a fair parent-wide 50 ms fill cadence including timer wraparound,
+global timing and stop-on-failure recovery ordering. Schema fixtures prove the
+zero-transition default, explicit uniform effects/transitions and that LED timing
+is a parent-only option. The optional compile pass proves ESPHome code
 generation and integration for the hub-only, multi-hub, digital, PWM, servo,
 ADC, RGB and ownership surfaces. Neither command replaces real PBHUB hardware
 validation; ESPHome servo state and `has_reached_target()` are not transport or

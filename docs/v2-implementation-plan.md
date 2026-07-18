@@ -216,7 +216,8 @@ pbhub:
 If omitted, v2 leaves the firmware default untouched. If configured, the value
 must be 0 or 1 and the hub must report application firmware version exactly 2.
 That response selects the audited protocol contract; it does not authenticate
-the exact factory binary.
+the exact factory binary. The setting affects every RGB output on the hub, so
+strips that require incompatible timing modes cannot share one PBHUB.
 
 ### Digital input
 
@@ -339,9 +340,16 @@ light:
 
 This is one uniform RGB light spanning the configured LEDs. It is not an
 addressable light. Setup writes LED count and firmware brightness 255. Each
-update resolves on/off, brightness and RGB on the host, then issues one safe fill
-from index 0 across exactly `num_leds` entries. Detected transport recovery
-replays count and firmware brightness before the desired light state.
+update resolves on/off, brightness and RGB on the host, then stages one safe fill
+from index 0 across exactly `num_leds` entries. Intermediate states coalesce in a
+fair parent-owned queue. The hub sends at most one normal RGB fill per provisional
+50 ms interval across all six strips. That host traffic policy is not a claim of
+firmware or servo timing safety and remains subject to Phase 8 measurement.
+
+PBHUB lights default to `default_transition_length: 0s`; explicit uniform RGB
+effects and transitions remain available and are sampled through the same queue.
+Detected transport recovery restores count and firmware brightness before
+synchronously replaying the latest desired light state.
 
 ## Support boundary
 
@@ -444,6 +452,7 @@ components/pbhub/
   pbhub_ownership.h
   pbhub_polling.h
   pbhub_recovery.h
+  pbhub_rgb_queue.h
   pbhub.h
   pbhub.cpp
   pbhub_entities.h
@@ -458,6 +467,8 @@ components/pbhub/
   input and ADC reads, with no ESPHome entity dependency.
 - `pbhub_recovery.h`: host-testable health state machine and recovery-client
   orchestration with no ESPHome entity dependency.
+- `pbhub_rgb_queue.h`: six-client coalescing FIFO that fairly serializes normal
+  RGB fills across one physical hub, with no ESPHome entity dependency.
 - `pbhub.h/.cpp`: I2C transport, device health, verified firmware-version state,
   recovery replay, endpoint ownership and typed protocol operations.
 - `pbhub_entities.h/.cpp`: thin feature-guarded ESPHome entity wrappers.
@@ -631,11 +642,15 @@ pending, and the parent performs at most one scheduled read per loop pass. Queue
 requests remain pending while the hub is unverified or recovering and resume only
 in `READY`. The twelve-entry capacity is sufficient because endpoint ownership
 allows at most one polling entity on each of the twelve physical signals.
-User-triggered output changes remain immediate while the parent is ready.
-
-RGB updates should be coalesced to the final state available in a loop pass and
-rate-limited if effects or rapid transitions generate faster changes than the
-firmware can transmit safely.
+User-triggered switch, PWM and servo changes remain immediate while the parent is
+ready. RGB is intentionally scheduled: each light stores only its latest host-
+scaled triple, duplicate queue entries coalesce and a six-client parent FIFO
+preserves fairness. The parent permits at most one normal RGB fill every 50 ms
+across the whole hub while continuing scheduled input and ADC polls between due
+fills. The fixed interval is a provisional traffic cap, not a firmware-derived
+safe rate; Phase 8 hardware measurements must validate or revise it. Recovery
+replay bypasses this cadence so the parent cannot enter `READY` before the latest
+desired state has actually been transported.
 
 ### Feature guards
 
@@ -752,10 +767,13 @@ remains.
 ### RGB light
 
 - Validate slot `0..5` and count `1..74`.
-- During setup: set count, set firmware brightness 255, optionally set the global
-  timing mode once, then send black if restoration policy requires it.
-- On update: resolve on/off, brightness and RGB on the host; send one bounded fill
-  at start 0 for exactly `num_leds`.
+- During setup: optionally set the global timing mode once, set count, set
+  firmware brightness 255, then send black when the deterministic restore policy
+  requires off.
+- On update: resolve on/off, brightness, color brightness, RGB and gamma on the
+  ESP host; stage one bounded fill at start 0 for exactly `num_leds`.
+- Default ordinary changes to no transition. Explicit uniform RGB effects and
+  transitions remain supported behind the parent-wide 50 ms scheduler.
 - Keep the desired final light state separately and cache the scaled RGB triple
   only as the last successfully transported fill.
 - ESPHome publishes the light's desired logical state before this output writes;
@@ -952,7 +970,8 @@ Changes:
 - Correct slot/count validation and initialization.
 - Apply host brightness and uniform fill.
 - Add optional firmware-v2 LED timing mode at parent scope.
-- Coalesce redundant writes.
+- Default ordinary changes to zero transition and coalesce normal fills through
+  a fair parent-wide queue with a provisional 50 ms aggregate interval.
 
 Acceptance:
 
@@ -962,6 +981,8 @@ Acceptance:
 - Brightness never uses the STM32's defective scaler below 255.
 - Host-scaled RGB byte boundaries 0, 127, 128, 254 and 255 are encoded exactly.
 - The light turns fully off with an explicit black fill.
+- Multiple strips cannot burst normal fills or starve one another; only the
+  newest queued state of each strip is transported.
 - Detected recovery restores timing/count/brightness before replaying the
   desired fill; a failed step does not advance to output replay.
 
