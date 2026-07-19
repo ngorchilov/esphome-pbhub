@@ -1,5 +1,5 @@
 esphome:
-  name: pbhub-unsupported-rtttl-output
+  name: pbhub-rtttl-pwm-zero-means-zero
 
 packages:
   common: !include ../common/esp32-idf.yaml
@@ -10,11 +10,11 @@ pbhub:
 
 output:
   - platform: pbhub
-    id: fixed_pwm
+    id: unsafe_zero_pwm
     pbhub_id: test_hub
     channel: 0
-    signal: a
+    signal: b
     mode: pwm
 
 rtttl:
-  output: fixed_pwm
+  output: unsafe_zero_pwm

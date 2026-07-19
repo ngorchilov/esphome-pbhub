@@ -1,5 +1,10 @@
 # ESPHome PBHUB v2 Implementation Plan
 
+> This plan defines the canonical `v2` component. The separate `v2-rtttl`
+> compatibility branch adds only the fixed-tone RTTTL behavior documented in
+> [fixed-tone RTTTL](fixed-tone-rtttl.md); statements below that exclude RTTTL
+> continue to describe canonical `v2` and true variable-pitch playback.
+
 This is the implementation plan for the `v2` branch. The overhaul is intentionally
 split into reviewable phases. The protocol and safety decisions come from
 [the firmware datasheet](pbhub-firmware-protocol.md), which remains the source of

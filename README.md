@@ -1,4 +1,4 @@
-# ESPHome PBHUB v2
+# ESPHome PBHUB v2 — fixed-tone RTTTL variant
 
 An ESPHome external component for the M5Stack Unit PBHUB v1.1 (SKU U041-B)
 running the stock application protocol that reports firmware version `2`.
@@ -8,6 +8,12 @@ output, raw ADC, fixed-frequency PWM, direct-pulse servo output and uniform RGB
 strips. It validates the PBHUB's real channel/signal model, prevents conflicting
 use of one physical signal and restores desired outputs after a detected
 transport failure.
+
+This `v2-rtttl` branch additionally lets ESPHome's standard `rtttl` component
+consume a PBHUB PWM output. RTTTL rhythm, rests and automation APIs remain
+standard while PBHUB deliberately ignores note pitch. A passive buzzer can
+therefore produce fixed-pitch alerts; the branch does not make the firmware
+capable of playing melodies. See [fixed-tone RTTTL](docs/fixed-tone-rtttl.md).
 
 > **Status:** the channel/signal API documented below has passed the repository's
 > ESPHome 2026.7.0 software-validation matrix, including ESP-IDF and Arduino
@@ -24,6 +30,7 @@ transport failure.
 | ESPHome | Validation target: `2026.7.0` |
 | Frameworks | ESP-IDF and Arduino |
 | Controller | ESP32 |
+| RTTTL compatibility | Fixed-tone rhythm on PBHUB `mode: pwm`; pitch is ignored |
 
 The firmware byte is a protocol compatibility guard. A response of `2` does not
 authenticate an unmodified factory image. The component sends no feature command
@@ -36,7 +43,8 @@ configuration.
 
 ## Installation and complete example
 
-Until a v2 release is published, load the component from the `v2` branch.
+Load the PBHUB component from the `v2-rtttl` branch. The `rtttl` block and its
+automations remain ESPHome's built-in component.
 
 The following conflict-free example covers every v2 entity type. Controller pins
 and entity names are illustrative.
@@ -53,7 +61,7 @@ esp32:
 logger:
 
 external_components:
-  - source: github://ngorchilov/esphome-pbhub@v2
+  - source: github://ngorchilov/esphome-pbhub@v2-rtttl
     components: [pbhub]
 
 i2c:
@@ -99,6 +107,7 @@ output:
     channel: 1
     signal: b
     mode: pwm
+    zero_means_zero: true
 
   - platform: pbhub
     id: hub_servo_output
@@ -106,6 +115,16 @@ output:
     channel: 2
     signal: a
     mode: servo
+
+rtttl:
+  id: hub_buzzer
+  output: hub_pwm
+  gain: 5%
+
+script:
+  - id: play_buzzer_alert
+    then:
+      - rtttl.play: alert:d=16,o=5,b=180:c,c,p,c6.
 
 servo:
   - id: hub_servo
@@ -303,11 +322,23 @@ frequency of approximately **392.16 Hz**, but real timing and jitter remain
 unmeasured. Encoded duty 0 and 255 are implemented by the component as digital
 low and high; only values 1 through 254 use the firmware PWM register.
 
-Do not use this output for RTTTL, an ESPHome servo or a load that requires a
-different PWM frequency. A `frequency:` option is rejected. Runtime frequency
-requests from a direct or future consumer are ignored with a warning. Standard
-float-output level, on/off and power-transform actions remain available in PWM
-mode.
+Do not use this output for an ESPHome servo or a load that requires a different
+PWM frequency. A `frequency:` option is rejected. Runtime frequency requests are
+silently ignored; when duty is active they are interpreted as note boundaries
+for fixed-tone articulation. Standard float-output level and on/off actions
+remain available in PWM mode. Runtime power-transform actions remain available
+for ordinary PWM outputs, but are rejected when RTTTL consumes that output
+because they could make its validated tone duty silent.
+
+On `v2-rtttl`, this output can be consumed by ESPHome's standard `rtttl`
+component. Tempo, note duration, dotted notes and pauses are retained; all pitch
+tokens produce the PBHUB's same native PWM tone. A nonblocking 10 ms low gap
+separates changed-pitch tone tokens; ESPHome's built-in RTTTL code uses its own
+blocking 10 ms gap for consecutive identical notes. The PBHUB output silently
+consumes RTTTL's frequency requests without changing its native frequency.
+ESPHome 2026.7.0 also emits its generic warning that RTTTL does not recognize
+this external output type; that warning is expected on this branch. See the
+[complete fixed-tone contract](docs/fixed-tone-rtttl.md).
 
 PWM writes are immediate and do not use the RGB fill limiter. Rapid consumer
 transitions can generate substantial I2C traffic and worsen the stock firmware's
@@ -493,7 +524,8 @@ acknowledgement or physical-output feedback.
 - PBHUB firmware protocol versions other than self-reported version `2`.
 - Legacy component YAML, generic GPIOPin use, `pbhub_pwm` or `pbhub_rgb`.
 - Internal input pulls, interrupts, firmware-side debounce or edge capture.
-- Variable-frequency PWM, RTTTL and pseudo-servo through PWM.
+- Variable-frequency PWM, pitched or melodic RTTTL through PBHUB and
+  pseudo-servo through PWM.
 - Addressable RGB effects or RGBW output.
 - Runtime I2C address mutation, MCU reset, IAP or firmware flashing.
 - Multiple entities owning one physical channel/signal pair.
@@ -508,6 +540,7 @@ sources of truth are:
 
 - [PBHUB v1.1 internal firmware protocol datasheet](docs/pbhub-firmware-protocol.md)
 - [ESPHome PBHUB v2 implementation plan](docs/v2-implementation-plan.md)
+- [fixed-tone RTTTL compatibility behavior](docs/fixed-tone-rtttl.md)
 - [hardware validation equipment checklist](docs/hardware-validation-equipment.md)
 - [v2 clean-break notice](docs/v2-clean-break.md)
 - [validation fixtures and commands](tests/README.md)

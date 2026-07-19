@@ -1,0 +1,22 @@
+esphome:
+  name: pbhub-rtttl-inaudible-gain
+
+packages:
+  common: !include ../common/esp32-idf.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: buzzer_output
+    pbhub_id: test_hub
+    channel: 0
+    signal: b
+    mode: pwm
+    zero_means_zero: true
+
+rtttl:
+  output: buzzer_output
+  gain: 100%

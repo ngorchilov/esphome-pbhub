@@ -1,0 +1,1 @@
+power transforms must produce PWM duty 1..254, not 255

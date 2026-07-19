@@ -99,6 +99,11 @@ servo:
     max_level: 12.5%
     transition_length: 0s
 
+rtttl:
+  id: topology_rtttl
+  output: topology_pwm
+  gain: 5%
+
 light:
   - platform: pbhub
     id: topology_rgb

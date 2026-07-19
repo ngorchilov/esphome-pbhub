@@ -47,7 +47,9 @@ provided. Invalid old shapes fail configuration.
 3. ADC is fixed to signal A, configured by `channel`, exposes no `signal` choice
    and publishes raw `0..4095` values.
 4. Every output requires an explicit `mode`. PWM remains fixed near a calculated
-   nominal 392.16 Hz and cannot be used for RTTTL or servo control.
+   nominal 392.16 Hz and cannot reproduce RTTTL pitch or control a servo. On the
+   `v2-rtttl` branch only, its PBHUB output integration lets ESPHome's standard
+   RTTTL component use it for fixed-tone rhythm and pauses.
 5. Servo mode writes direct `500..2500 us` pulses in the firmware's nominal
    20 ms frame; zero detaches. Neutral transforms and zero transition are
    required.

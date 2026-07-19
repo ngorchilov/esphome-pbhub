@@ -508,6 +508,15 @@ void PbHubPWMOutput::setup() {
     this->set_level(0.0f);
 }
 
+void PbHubPWMOutput::loop() {
+  if (!this->note_gap_pending_ || millis() - this->note_gap_started_ms_ < FIXED_TONE_NOTE_GAP_MS)
+    return;
+
+  this->note_gap_pending_ = false;
+  if (this->parent_ != nullptr && this->parent_->is_hub_ready())
+    this->apply_desired_state_();
+}
+
 void PbHubPWMOutput::dump_config() {
   ESP_LOGCONFIG(TAG, "PBHUB PWM Output:");
   if (this->endpoint_valid_) {
@@ -517,15 +526,26 @@ void PbHubPWMOutput::dump_config() {
     ESP_LOGCONFIG(TAG, "  Channel/signal: invalid");
   }
   ESP_LOGCONFIG(TAG, "  PWM Frequency: nominal %.2f Hz (fixed by firmware)", protocol::NOMINAL_PWM_FREQUENCY_HZ);
+  ESP_LOGCONFIG(TAG, "  RTTTL: fixed-tone rhythm supported; requested note frequencies are ignored");
   LOG_FLOAT_OUTPUT(this);
 }
 
 void PbHubPWMOutput::update_frequency(float frequency) {
-  if (this->frequency_warning_logged_)
+  (void) frequency;
+  if (this->parent_ == nullptr || !this->parent_->is_hub_ready() || !this->endpoint_valid_ ||
+      !this->desired_known_ || this->desired_mode_ == protocol::PwmDriveMode::DIGITAL_LOW ||
+      !this->applied_known_ || this->applied_mode_ == protocol::PwmDriveMode::DIGITAL_LOW ||
+      this->note_gap_pending_)
     return;
-  this->frequency_warning_logged_ = true;
-  ESP_LOGW(TAG, "PBHUB PWM frequency is fixed at nominal %.2f Hz; requested %.2f Hz was ignored",
-           protocol::NOMINAL_PWM_FREQUENCY_HZ, frequency);
+
+  if (!this->parent_->write_pwm(this->endpoint_, 0))
+    return;
+
+  this->applied_duty_ = 0;
+  this->applied_mode_ = protocol::PwmDriveMode::DIGITAL_LOW;
+  this->applied_known_ = true;
+  this->note_gap_pending_ = true;
+  this->note_gap_started_ms_ = millis();
 }
 
 void PbHubPWMOutput::write_state(float state) {
@@ -543,7 +563,9 @@ void PbHubPWMOutput::write_state(float state) {
   this->desired_duty_ = static_cast<uint8_t>(std::lround(clamped * 255.0f));
   this->desired_mode_ = protocol::pwm_drive_mode(this->desired_duty_);
   this->desired_known_ = true;
-  if (this->parent_->is_hub_ready())
+  if (this->desired_mode_ == protocol::PwmDriveMode::DIGITAL_LOW)
+    this->note_gap_pending_ = false;
+  if (this->parent_->is_hub_ready() && !this->note_gap_pending_)
     this->apply_desired_state_();
 }
 

@@ -21,6 +21,7 @@ TARGET_PACKAGES = {
 }
 
 FRAMEWORK_FIXTURES = {
+    "arduino-fixed-tone-rtttl.yaml",
     "arduino-hub-only.yaml",
     "arduino-topologies.yaml",
 }
@@ -29,6 +30,7 @@ POSITIVE_FIXTURES = {
     "adc-channels.yaml",
     "all-channel-signals.yaml",
     "digital-entities.yaml",
+    "fixed-tone-rtttl.yaml",
     "hub-only.yaml",
     "multi-hub.yaml",
     "ownership.yaml",
@@ -44,10 +46,12 @@ TARGET_INCLUDE_PATTERN = re.compile(
 
 SCENARIO_INCLUDE_PATTERN = re.compile(
     r"!include\s+\.\./common/"
-    r"(pbhub-(?:core-only|full-topology)\.yaml)"
+    r"(pbhub-(?:core-only|fixed-tone-rtttl|full-topology)\.yaml)"
 )
 
 PAIRED_SCENARIOS = {
+    "tests/positive/fixed-tone-rtttl.yaml": "pbhub-fixed-tone-rtttl.yaml",
+    "tests/framework/arduino-fixed-tone-rtttl.yaml": "pbhub-fixed-tone-rtttl.yaml",
     "tests/positive/hub-only.yaml": "pbhub-core-only.yaml",
     "tests/framework/arduino-hub-only.yaml": "pbhub-core-only.yaml",
     "tests/positive/multi-hub.yaml": "pbhub-full-topology.yaml",
@@ -121,7 +125,16 @@ TOPOLOGY_GENERATED_SOURCE_CHECKS = (
     "multiplexed_hub_4->set_i2c_address(0x61);",
     "new(topology_pwm) pbhub::PbHubPWMOutput(feature_hub, 1, 1);",
     "new(topology_servo_output) pbhub::PbHubServoOutput(feature_hub, 2, 0);",
+    "topology_rtttl->set_output(topology_pwm);",
     'feature_hub->claim_endpoint(2, 1, pbhub::EndpointOwner::RGB, "topology_rgb");',
+)
+
+FIXED_TONE_RTTTL_GENERATED_SOURCE_CHECKS = (
+    "fixed_tone_player->set_output(fixed_pwm);",
+    "fixed_tone_player->set_gain(0.05f);",
+    "new(rtttl_playaction_id) rtttl::PlayAction<>(fixed_tone_player);",
+    "rtttl_isplayingcondition_id->set_parent(fixed_tone_player);",
+    "rtttl_stopaction_id->set_parent(fixed_tone_player);",
 )
 
 GENERATED_SOURCE_CHECKS = {
@@ -145,6 +158,8 @@ GENERATED_SOURCE_CHECKS = {
         "rgb_one_led->set_default_transition_length(0);",
         "rgb_max_leds->set_default_transition_length(250);",
     ),
+    "fixed-tone-rtttl.yaml": FIXED_TONE_RTTTL_GENERATED_SOURCE_CHECKS,
+    "arduino-fixed-tone-rtttl.yaml": FIXED_TONE_RTTTL_GENERATED_SOURCE_CHECKS,
 }
 
 
@@ -199,6 +214,8 @@ def expected_target_package(root, fixture):
     if relative == "tests/positive/multi-hub.yaml":
         return "esp32-idf-topology.yaml"
     if relative == "tests/framework/arduino-hub-only.yaml":
+        return "esp32-arduino.yaml"
+    if relative == "tests/framework/arduino-fixed-tone-rtttl.yaml":
         return "esp32-arduino.yaml"
     if relative == "tests/framework/arduino-topologies.yaml":
         return "esp32-arduino-topology.yaml"
@@ -383,14 +400,21 @@ def compile_fixture(esphome, root, fixture):
         return False
 
     pbhub_commands = []
+    rtttl_commands = []
     for entry in command_entries:
         source = str(entry.get("file", "")).replace("\\", "/")
-        if not source.endswith("/esphome/components/pbhub/pbhub.cpp"):
+        if source.endswith("/esphome/components/pbhub/pbhub.cpp"):
+            commands_for_source = pbhub_commands
+        elif source.endswith("/esphome/components/rtttl/rtttl.cpp"):
+            commands_for_source = rtttl_commands
+        else:
             continue
         if isinstance(entry.get("command"), str):
-            pbhub_commands.append(entry["command"])
+            commands_for_source.append(entry["command"])
         elif isinstance(entry.get("arguments"), list):
-            pbhub_commands.append(" ".join(str(arg) for arg in entry["arguments"]))
+            commands_for_source.append(
+                " ".join(str(arg) for arg in entry["arguments"])
+            )
 
     if len(pbhub_commands) != 1:
         print(
@@ -419,6 +443,56 @@ def compile_fixture(esphome, root, fixture):
         )
         return False
     print(f"[PASS] framework evidence {fixture.relative_to(root)}: {framework}")
+
+    if fixture.name in {
+        "fixed-tone-rtttl.yaml",
+        "arduino-fixed-tone-rtttl.yaml",
+    }:
+        if len(rtttl_commands) != 1:
+            print(
+                f"[FAIL] expected one built-in RTTTL compile command for "
+                f"{fixture.relative_to(root)}, got {len(rtttl_commands)}",
+                file=sys.stderr,
+            )
+            return False
+        generated_rtttl = (
+            build_root
+            / "src"
+            / "esphome"
+            / "components"
+            / "rtttl"
+            / "rtttl.cpp"
+        )
+        if not generated_rtttl.is_file():
+            print(
+                f"[FAIL] generated built-in RTTTL source not found: "
+                f"{generated_rtttl.relative_to(root)}",
+                file=sys.stderr,
+            )
+            return False
+        generated_rtttl_text = generated_rtttl.read_text(encoding="utf-8")
+        if "output_->update_frequency(this->output_freq_);" not in generated_rtttl_text:
+            print(
+                f"[FAIL] ESPHome's built-in RTTTL source was not used by "
+                f"{fixture.relative_to(root)}",
+                file=sys.stderr,
+            )
+            return False
+        defines_file = build_root / "src" / "esphome" / "core" / "defines.h"
+        defines = defines_file.read_text(encoding="utf-8")
+        required_defines = (
+            "#define USE_OUTPUT",
+            "#define USE_RTTTL_FINISHED_PLAYBACK_CALLBACK",
+        )
+        missing = [define for define in required_defines if define not in defines]
+        if missing:
+            print(
+                f"[FAIL] RTTTL feature profile {fixture.relative_to(root)} "
+                f"missed {missing}",
+                file=sys.stderr,
+            )
+            return False
+        print(f"[PASS] built-in RTTTL integration {fixture.relative_to(root)}")
 
     if fixture.name in CORE_ONLY_FIXTURES or fixture.name in FULL_SURFACE_FIXTURES:
         defines_file = build_root / "src" / "esphome" / "core" / "defines.h"

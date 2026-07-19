@@ -233,35 +233,84 @@ static void test_failed_write_offline_last_desired_and_recovery() {
   CHECK(bus.empty());
 }
 
-static void test_frequency_nonfinite_and_infinite_levels() {
+static void test_fixed_tone_rtttl_gap_nonfinite_and_infinite_levels() {
   ScriptedI2CBus bus;
   PbHubComponent hub;
   PbHubPWMOutput pwm(&hub, 0, 1);
   setup_ready_pwm(hub, pwm, bus, 0, 1, 0x41);
   unit_test_warning_count = 0;
 
+  // RTTTL requests frequency before setting the first note level. Starting
+  // from low must not create a leading articulation gap.
+  const size_t before_first_note = bus.transaction_count();
+  pwm.update_frequency(523.0f);
+  CHECK(bus.transaction_count() == before_first_note);
   bus.expect_write(0x61, 0x43, {128});
   pwm.set_level(0.5f);
   const size_t after_half = bus.transaction_count();
 
+  set_unit_test_millis(5000);
+  bus.expect_write(0x61, 0x41, {0});
   pwm.update_frequency(1000.0f);
-  CHECK(unit_test_warning_count == 1);
-  CHECK(bus.transaction_count() == after_half);
-  pwm.update_frequency(2000.0f);
-  CHECK(unit_test_warning_count == 1);
-  CHECK(bus.transaction_count() == after_half);
+  CHECK(unit_test_warning_count == 0);
+  CHECK(bus.transaction_count() == after_half + 1);
+
+  // ESPHome RTTTL immediately writes the next note level. Hold that desired
+  // level until the nonblocking fixed-tone articulation gap has elapsed.
   pwm.set_level(0.5f);
-  CHECK(bus.transaction_count() == after_half);
+  CHECK(bus.transaction_count() == after_half + 1);
+  set_unit_test_millis(5009);
+  pwm.loop();
+  CHECK(bus.transaction_count() == after_half + 1);
+  bus.expect_write(0x61, 0x43, {128});
+  set_unit_test_millis(5010);
+  pwm.loop();
+  CHECK(bus.transaction_count() == after_half + 2);
+
+  // A pause or stop during the gap cancels the pending note-on replay.
+  bus.expect_write(0x61, 0x41, {0});
+  pwm.update_frequency(2000.0f);
+  pwm.set_level(0.5f);
+  pwm.set_level(0.0f);
+  const size_t after_cancel = bus.transaction_count();
+  set_unit_test_millis(5020);
+  pwm.loop();
+  CHECK(bus.transaction_count() == after_cancel);
+
+  // ESPHome already inserts its own gap for repeated equal notes by writing
+  // zero before update_frequency(). Do not add a second gap in that case.
+  bus.expect_write(0x61, 0x43, {128});
+  pwm.set_level(0.5f);
+  bus.expect_write(0x61, 0x41, {0});
+  pwm.set_level(0.0f);
+  const size_t after_builtin_gap = bus.transaction_count();
+  pwm.update_frequency(2000.0f);
+  CHECK(bus.transaction_count() == after_builtin_gap);
+  bus.expect_write(0x61, 0x43, {128});
+  pwm.set_level(0.5f);
+
+  // Gap expiry uses unsigned elapsed time and therefore survives millis()
+  // wraparound.
+  set_unit_test_millis(std::numeric_limits<uint32_t>::max() - 5U);
+  bus.expect_write(0x61, 0x41, {0});
+  pwm.update_frequency(2500.0f);
+  pwm.set_level(0.5f);
+  const size_t before_wrap_expiry = bus.transaction_count();
+  set_unit_test_millis(3);
+  pwm.loop();
+  CHECK(bus.transaction_count() == before_wrap_expiry);
+  bus.expect_write(0x61, 0x43, {128});
+  set_unit_test_millis(4);
+  pwm.loop();
 
   const float nan = std::numeric_limits<float>::quiet_NaN();
   pwm.set_level(nan);
-  CHECK(unit_test_warning_count == 2);
-  CHECK(bus.transaction_count() == after_half);
+  CHECK(unit_test_warning_count == 1);
   pwm.set_level(nan);
-  CHECK(unit_test_warning_count == 2);
-  CHECK(bus.transaction_count() == after_half);
+  CHECK(unit_test_warning_count == 1);
+  const size_t after_nan = bus.transaction_count();
   pwm.set_level(0.5f);
-  CHECK(bus.transaction_count() == after_half);
+  CHECK(bus.transaction_count() == after_nan);
 
   bus.expect_write(0x61, 0x41, {1});
   pwm.set_level(std::numeric_limits<float>::infinity());
@@ -317,7 +366,7 @@ int main() {
   test_startup_transforms_and_preexisting_desired_level();
   test_inversion_and_power_transforms();
   test_failed_write_offline_last_desired_and_recovery();
-  test_frequency_nonfinite_and_infinite_levels();
+  test_fixed_tone_rtttl_gap_nonfinite_and_infinite_levels();
   test_same_channel_adc_a_and_pwm_b_are_independent();
 
   if (failures != 0)

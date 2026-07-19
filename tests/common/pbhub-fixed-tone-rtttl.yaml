@@ -1,0 +1,33 @@
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: fixed_pwm
+    pbhub_id: test_hub
+    channel: 0
+    signal: b
+    mode: pwm
+    zero_means_zero: true
+
+rtttl:
+  id: fixed_tone_player
+  output: fixed_pwm
+  gain: 5%
+  on_finished_playback:
+    - logger.log: Fixed-tone playback finished
+
+script:
+  - id: exercise_fixed_tone_rtttl
+    then:
+      - rtttl.play:
+          id: fixed_tone_player
+          rtttl: test:d=16,o=5,b=200:c,f,p,c6.
+      - if:
+          condition:
+            rtttl.is_playing:
+              id: fixed_tone_player
+          then:
+            - rtttl.stop:
+                id: fixed_tone_player

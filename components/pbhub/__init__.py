@@ -201,14 +201,14 @@ def _validate_output_consumers(full_config):
     if not output_modes:
         return
 
-    for index, entry in enumerate(full_config.get("rtttl", [])):
-        output_id = str(entry.get(CONF_OUTPUT))
-        if output_id in output_modes:
-            raise cv.FinalExternalInvalid(
-                f"PBHUB output '{output_id}' cannot be used by RTTTL: stock "
-                "firmware does not support dynamic PWM frequency",
-                path=[cv.ROOT_CONFIG_PATH, "rtttl", index, CONF_OUTPUT],
-            )
+    from .rtttl import validate_rtttl_consumers
+
+    validate_rtttl_consumers(
+        full_config,
+        output_modes,
+        OUTPUT_MODE_PWM,
+        OUTPUT_MODE_SERVO,
+    )
 
     servo_consumers = {}
     for index, entry in enumerate(full_config.get("servo", [])):

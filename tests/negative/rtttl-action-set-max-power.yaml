@@ -1,0 +1,27 @@
+esphome:
+  name: pbhub-rtttl-action-max
+  on_boot:
+    then:
+      - output.set_max_power:
+          id: buzzer_output
+          max_power: 4%
+
+packages:
+  common: !include ../common/esp32-idf.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: buzzer_output
+    pbhub_id: test_hub
+    channel: 0
+    signal: b
+    mode: pwm
+    zero_means_zero: true
+
+rtttl:
+  output: buzzer_output
+  gain: 5%

@@ -132,14 +132,20 @@ class PbHubBinarySensor : public binary_sensor::BinarySensor, public PollingComp
 #ifdef USE_OUTPUT
 class PbHubPWMOutput final : public output::FloatOutput, public Component, public PbHubRecoveryClient {
  public:
+  static constexpr uint32_t FIXED_TONE_NOTE_GAP_MS = 10;
+
   PbHubPWMOutput(PbHubComponent *parent, uint8_t channel, uint8_t signal_index);
 
   void setup() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return PbHubComponent::SETUP_PRIORITY + 1.0f; }
   void update_frequency(float frequency) override;
 
-  void invalidate_applied_state() override { this->applied_known_ = false; }
+  void invalidate_applied_state() override {
+    this->applied_known_ = false;
+    this->note_gap_pending_ = false;
+  }
   bool restore_configuration() override { return true; }
   bool replay_state() override;
 
@@ -157,7 +163,8 @@ class PbHubPWMOutput final : public output::FloatOutput, public Component, publi
   bool desired_known_{false};
   bool applied_known_{false};
   bool invalid_level_warning_logged_{false};
-  bool frequency_warning_logged_{false};
+  bool note_gap_pending_{false};
+  uint32_t note_gap_started_ms_{0};
 };
 
 class PbHubServoOutput final : public output::FloatOutput, public Component, public PbHubRecoveryClient {

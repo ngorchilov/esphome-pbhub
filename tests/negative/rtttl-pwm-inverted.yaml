@@ -1,0 +1,22 @@
+esphome:
+  name: pbhub-rtttl-pwm-inverted
+
+packages:
+  common: !include ../common/esp32-idf.yaml
+
+pbhub:
+  id: test_hub
+  i2c_id: test_i2c
+
+output:
+  - platform: pbhub
+    id: inverted_pwm
+    pbhub_id: test_hub
+    channel: 0
+    signal: b
+    mode: pwm
+    inverted: true
+    zero_means_zero: true
+
+rtttl:
+  output: inverted_pwm
